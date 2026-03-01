@@ -1709,7 +1709,7 @@
     function triggerBoom() {
       if (activeEvent === 'boom') { endEvent(); return; }
       if (isEventActive()) endEvent();
-      if (drawings.length < 2) { return; }
+      if (drawings.length < 2) { finishReward(); return; }
       activeEvent = 'boom'; rainMode = false;
       forceAllSubsToEvent();
       drawings.forEach(d => {
@@ -1723,7 +1723,7 @@
     function triggerPogo() {
       if (activeEvent === 'pogo') { endEvent(); return; }
       if (isEventActive()) endEvent();
-      if (drawings.length < 2) { return; }
+      if (drawings.length < 2) { finishReward(); return; }
       activeEvent = 'pogo'; rainMode = false;
       forceAllSubsToEvent();
       drawings.forEach(d => {
@@ -1740,7 +1740,7 @@
     function triggerVolcano() {
       if (activeEvent === 'volcano') { endEvent(); return; }
       if (isEventActive()) endEvent();
-      if (drawings.length < 2) { return; }
+      if (drawings.length < 2) { finishReward(); return; }
       activeEvent = 'volcano'; rainMode = false;
       forceAllSubsToEvent();
       drawings.forEach(d => {
@@ -1761,7 +1761,7 @@
     function triggerConfetti() {
       if (activeEvent === 'confetti') { endEvent(); return; }
       if (isEventActive()) endEvent();
-      if (drawings.length < 2) { return; }
+      if (drawings.length < 2) { finishReward(); return; }
       activeEvent = 'confetti'; rainMode = false;
       forceAllSubsToEvent();
       drawings.forEach(d => {
@@ -1782,7 +1782,7 @@
     function triggerTornado() {
       if (activeEvent === 'tornado') { endEvent(); return; }
       if (isEventActive()) endEvent();
-      if (drawings.length < 2) { return; }
+      if (drawings.length < 2) { finishReward(); return; }
       activeEvent = 'tornado'; rainMode = false;
       forceAllSubsToEvent();
       const startTime = Date.now();
@@ -1802,7 +1802,7 @@
     function triggerThriller() {
       if (activeEvent === 'thriller') { endEvent(); return; }
       if (isEventActive()) endEvent();
-      if (drawings.length < 2) { return; }
+      if (drawings.length < 2) { finishReward(); return; }
       activeEvent = 'thriller'; rainMode = false;
       forceAllSubsToEvent();
       const startTime = Date.now();
@@ -1840,7 +1840,7 @@
     function triggerTaiko() {
       if (activeEvent === 'taiko') { endEvent(); return; }
       if (isEventActive()) endEvent();
-      if (drawings.length < 2) { return; }
+      if (drawings.length < 2) { finishReward(); return; }
       activeEvent = 'taiko'; rainMode = false;
       forceAllSubsToEvent();
       const startTime = Date.now();
@@ -1859,7 +1859,7 @@
     function triggerQuake() {
       if (activeEvent === 'quake') { endEvent(); return; }
       if (isEventActive()) endEvent();
-      if (drawings.length < 2) { return; }
+      if (drawings.length < 2) { finishReward(); return; }
       activeEvent = 'quake'; rainMode = false;
       forceAllSubsToEvent();
       const startTime = Date.now();
@@ -1881,7 +1881,7 @@
     function triggerRace() {
       if (activeEvent === 'race') { endEvent(); return; }
       if (isEventActive()) endEvent();
-      if (drawings.length < 2) { return; }
+      if (drawings.length < 2) { finishReward(); return; }
       activeEvent = 'race'; rainMode = false;
       forceAllSubsToEvent();
       const count = drawings.length;
@@ -1904,7 +1904,7 @@
     function triggerSpace() {
       if (activeEvent === 'space') { endEvent(); return; }
       if (isEventActive()) endEvent();
-      if (drawings.length < 2) { return; }
+      if (drawings.length < 2) { finishReward(); return; }
       activeEvent = 'space'; rainMode = false;
       forceAllSubsToEvent();
       drawings.forEach(d => {
@@ -1924,7 +1924,7 @@
     function triggerWhirlpool() {
       if (activeEvent === 'whirlpool') { endEvent(); return; }
       if (isEventActive()) endEvent();
-      if (drawings.length < 2) { return; }
+      if (drawings.length < 2) { finishReward(); return; }
       activeEvent = 'whirlpool'; rainMode = false;
       forceAllSubsToEvent();
       const startTime = Date.now();
@@ -2104,7 +2104,7 @@
     function triggerPachinko() {
       if (activeEvent === 'pachinko') { endEvent(); return; }
       if (isEventActive()) endEvent();
-      if (drawings.length < 2) return;
+      if (drawings.length < 2) { finishReward(); return; }
       
       activeEvent = 'pachinko';
       rainMode = false;
@@ -2465,7 +2465,7 @@
       if (isEventActive()) endEvent();
       forceAllSubsToEvent();
       const eligible = drawings.filter(d => !d.el.classList.contains('showcase')&&!d.el.classList.contains('waiting')&&!d.el.classList.contains('spiral-to-lane'));
-      if (eligible.length < 4) { return; }
+      if (eligible.length < 4) { finishReward(); return; }
       
       activeEvent = 'fight'; rainMode = false;
 
