@@ -1,0 +1,2741 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>STRM-OVR Runtime</title>
+  <style>
+
+    html, body { 
+      margin: 0; padding: 0; background: transparent !important; 
+      overflow: hidden; width: 1920px; height: 1080px;
+      font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    }
+    #container { position: absolute; width: 100%; height: 100%; top: 0; left: 0; pointer-events: none; }
+
+    .item { 
+      position: absolute; top: 0; left: 0; display: flex;
+      flex-direction: column; align-items: center; width: 165px; will-change: transform; 
+    }
+    canvas.pixel-art { 
+      image-rendering: pixelated; width: 165px; height: 165px; 
+      background: transparent; z-index: 2; 
+    }
+
+    @keyframes jumpBounce { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-30px)} }
+    .jumping canvas { animation: jumpBounce 0.8s ease-in-out infinite; }
+    .is-sub canvas { filter: brightness(1.15); }
+
+    @keyframes userDance {
+      0%{transform:rotate(0deg) scale(1)} 
+      15%{transform:rotate(12deg) scale(1.15)} 
+      30%{transform:rotate(-12deg) scale(1.15)} 
+      45%{transform:rotate(8deg) scale(1.05) translateY(-15px)} 
+      60%{transform:rotate(-8deg) scale(1.1)} 
+      75%{transform:rotate(5deg) scale(1.15) translateY(-10px)} 
+      100%{transform:rotate(0deg) scale(1)}
+    }
+    .user-dancing canvas { animation: userDance 0.7s ease-in-out infinite !important; filter: brightness(1.2) !important; }
+    .user-dancing .nick { color: #FFD700 !important; }
+
+    @keyframes screenShake {
+      0%,100%{transform:translate(0,0)} 10%{transform:translate(-8px,6px)} 
+      20%{transform:translate(7px,-5px)} 30%{transform:translate(-6px,8px)} 
+      40%{transform:translate(8px,4px)} 50%{transform:translate(-4px,-7px)}
+      60%{transform:translate(6px,5px)} 70%{transform:translate(-7px,-3px)}
+      80%{transform:translate(5px,7px)} 90%{transform:translate(-3px,-6px)}
+    }
+    .screen-shake { animation: screenShake 0.15s infinite; }
+
+    #race-winner {
+      display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+      font-family:'Segoe UI',sans-serif; font-size:72px; font-weight:900;
+      color:#FFD700; text-shadow:0 0 30px #FFD700,0 0 60px #ff8c00,3px 3px 0 #000;
+      z-index:99999; white-space:nowrap;
+    }
+    @keyframes raceWinPulse { 0%,100%{transform:translate(-50%,-50%) scale(1)} 50%{transform:translate(-50%,-50%) scale(1.15)} }
+    #race-winner.show { display:block; animation:raceWinPulse 0.5s ease-in-out infinite; }
+    
+    .nick { 
+      color: white; font-weight: 900; font-size: 22px; width: 280px; 
+      text-align: center; margin-top: 2px; white-space: nowrap; 
+      text-shadow: 2px 2px 0 #000; z-index: 3;
+    }
+    .is-sub .nick { color: #FFD700; }
+    .fight-red .nick { color: #ff4444 !important; text-shadow: 2px 2px 0 #000, 0 0 8px rgba(255,0,0,0.5); }
+    .fight-blue .nick { color: #44aaff !important; text-shadow: 2px 2px 0 #000, 0 0 8px rgba(0,100,255,0.5); }
+
+    /* === SHOWCASE === */
+    .showcase {
+      position: fixed !important; top: 50% !important; left: 50% !important;
+      z-index: 99999 !important; will-change: transform;
+      animation: superDance 0.8s infinite ease-in-out !important;
+    }
+    .showcase::before {
+      content: ''; position: absolute; top: 50%; left: 50%;
+      width: 280px; height: 280px; transform: translate(-50%, -60%); 
+      z-index: 1; border-radius: 50%;
+      background: radial-gradient(circle, rgba(255,255,224,0.9) 0%, rgba(255,215,0,0.5) 40%, transparent 70%);
+      animation: auraPulse 1.5s infinite alternate ease-in-out;
+    }
+    .showcase canvas { filter: brightness(1.1); }
+    .showcase .nick { font-size: 33px !important; text-shadow: 3px 3px 0 #000, 0 0 10px rgba(0,0,0,0.5); margin-top: 15px; }
+    @keyframes superDance {
+      0%{transform:translate(-50%,-50%) scale(4.1) rotate(0deg)}
+      25%{transform:translate(-50%,-50%) scale(4.4) rotate(-5deg)}
+      50%{transform:translate(-50%,-50%) scale(4.1) rotate(0deg) translateY(-15px)}
+      75%{transform:translate(-50%,-50%) scale(4.4) rotate(5deg)}
+      100%{transform:translate(-50%,-50%) scale(4.1) rotate(0deg)}
+    }
+    @keyframes auraPulse {
+      0%{transform:translate(-50%,-60%) scale(1);opacity:0.7}
+      100%{transform:translate(-50%,-60%) scale(1.15);opacity:1}
+    }
+
+    /* === PACHINKO === */
+    #pachinko-hud {
+      display: none; position: fixed; top: 0; left: 0; width: 1920px; height: 1080px;
+      z-index: 90000; pointer-events: none;
+    }
+    #pachinko-board {
+      position: absolute; top: 0; left: 500px; width: 1420px; height: 1080px;
+      overflow: hidden;
+    }
+    .pachinko-peg {
+      position: absolute; width: 18px; height: 18px; border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, #e0e0e0, #888, #555);
+      box-shadow: 0 0 4px rgba(0,0,0,0.5), inset 0 1px 2px rgba(255,255,255,0.6);
+      z-index: 2;
+    }
+    .pachinko-hole {
+      position: absolute; bottom: 0; height: 70px; border-radius: 8px 8px 0 0;
+      z-index: 1; display: flex; align-items: center; justify-content: center;
+      font-weight: 900; font-size: 18px; color: #fff; text-shadow: 1px 1px 0 #000;
+      overflow: hidden;
+    }
+    .pachinko-hole::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+      border-radius: 8px 8px 0 0; opacity: 0.4;
+      background: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.5) 100%);
+    }
+    .pachinko-hole.hole-jackpot {
+      background: linear-gradient(180deg, #FFD700, #b8860b);
+      border: 2px solid #FFD700; border-bottom: none;
+      box-shadow: 0 0 20px rgba(255,215,0,0.4);
+    }
+    .pachinko-hole.hole-good {
+      background: linear-gradient(180deg, #4CAF50, #2e7d32);
+      border: 2px solid #4CAF50; border-bottom: none;
+      box-shadow: 0 0 12px rgba(76,175,80,0.3);
+    }
+    .pachinko-hole.hole-small {
+      background: linear-gradient(180deg, #2196F3, #1565c0);
+      border: 2px solid #2196F3; border-bottom: none;
+      box-shadow: 0 0 10px rgba(33,150,243,0.3);
+    }
+    .pachinko-hole.hole-zero {
+      background: linear-gradient(180deg, #666, #333);
+      border: 2px solid #555; border-bottom: none;
+    }
+    .pachinko-hole.hole-bad {
+      background: linear-gradient(180deg, #c62828, #8b0000);
+      border: 2px solid #e53935; border-bottom: none;
+      box-shadow: 0 0 15px rgba(229,57,53,0.4);
+    }
+    .pachinko-hole .hole-label {
+      position: relative; z-index: 2; font-size: 20px; text-align: center;
+      line-height: 1.1;
+    }
+    .pachinko-wall {
+      position: absolute; bottom: 70px; width: 4px; background: linear-gradient(180deg, #888, #555);
+      border-radius: 2px; z-index: 3;
+    }
+
+    /* Glow effects on ball entering hole */
+    @keyframes pachinkoGoldGlow {
+      0% { filter: brightness(1) drop-shadow(0 0 0px transparent); }
+      20% { filter: brightness(2) drop-shadow(0 0 25px #FFD700) drop-shadow(0 0 50px rgba(255,215,0,0.6)); }
+      100% { filter: brightness(1.5) drop-shadow(0 0 15px rgba(255,215,0,0.3)); transform: scale(0.3); opacity: 0; }
+    }
+    @keyframes pachinkoBadGlow {
+      0% { filter: brightness(1) drop-shadow(0 0 0px transparent); }
+      20% { filter: brightness(2) drop-shadow(0 0 25px #ff0000) drop-shadow(0 0 50px rgba(255,0,0,0.6)); }
+      100% { filter: brightness(1.5) drop-shadow(0 0 15px rgba(255,0,0,0.3)); transform: scale(0.3); opacity: 0; }
+    }
+    .pachinko-gold-glow { animation: pachinkoGoldGlow 0.7s ease-out forwards !important; }
+    .pachinko-bad-glow { animation: pachinkoBadGlow 0.7s ease-out forwards !important; }
+
+    /* Hole flash when ball enters */
+    @keyframes holeFlashGold {
+      0% { box-shadow: 0 0 20px rgba(255,215,0,0.4); }
+      50% { box-shadow: 0 0 60px rgba(255,215,0,0.9), 0 0 100px rgba(255,215,0,0.5), inset 0 0 30px rgba(255,215,0,0.4); }
+      100% { box-shadow: 0 0 20px rgba(255,215,0,0.4); }
+    }
+    @keyframes holeFlashBad {
+      0% { box-shadow: 0 0 15px rgba(229,57,53,0.4); }
+      50% { box-shadow: 0 0 60px rgba(255,0,0,0.9), 0 0 100px rgba(255,0,0,0.5), inset 0 0 30px rgba(255,0,0,0.4); }
+      100% { box-shadow: 0 0 15px rgba(229,57,53,0.4); }
+    }
+    .hole-flash-gold { animation: holeFlashGold 0.5s ease-out; }
+    .hole-flash-bad { animation: holeFlashBad 0.5s ease-out; }
+
+    /* Score list */
+    #pachinko-scores {
+      position: absolute; top: 20px; left: 20px; width: 460px; max-height: 640px;
+      overflow: hidden; z-index: 5;
+    }
+    #pachinko-scores-title {
+      font-family: 'Impact', 'Arial Black', sans-serif; font-size: 36px; font-weight: 900;
+      color: #FFD700; text-shadow: 3px 3px 0 #000, 0 0 20px rgba(255,215,0,0.5);
+      text-align: center; margin-bottom: 8px; letter-spacing: 3px;
+    }
+    .pachinko-score-row {
+      display: flex; align-items: center; padding: 4px 10px; margin-bottom: 2px;
+      border-radius: 6px; background: rgba(0,0,0,0.6);
+      border: 1px solid rgba(255,255,255,0.1);
+      transition: all 0.3s ease;
+    }
+    .pachinko-score-row.top-1 {
+      background: linear-gradient(90deg, rgba(255,215,0,0.3), rgba(0,0,0,0.6));
+      border-color: rgba(255,215,0,0.5);
+    }
+    .pachinko-score-row.top-2 {
+      background: linear-gradient(90deg, rgba(192,192,192,0.2), rgba(0,0,0,0.6));
+      border-color: rgba(192,192,192,0.3);
+    }
+    .pachinko-score-row.top-3 {
+      background: linear-gradient(90deg, rgba(205,127,50,0.2), rgba(0,0,0,0.6));
+      border-color: rgba(205,127,50,0.3);
+    }
+    .pachinko-score-rank {
+      font-size: 16px; font-weight: 900; color: #FFD700; width: 30px; text-align: center;
+      text-shadow: 1px 1px 0 #000;
+    }
+    .pachinko-score-name {
+      font-size: 15px; font-weight: 700; color: #fff; flex: 1;
+      text-shadow: 1px 1px 0 #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .pachinko-score-pts {
+      font-size: 16px; font-weight: 900; color: #4CAF50; text-shadow: 1px 1px 0 #000;
+      min-width: 60px; text-align: right;
+    }
+    .pachinko-score-pts.negative { color: #e53935; }
+    .pachinko-score-remaining {
+      font-size: 13px; font-weight: 700; color: rgba(255,255,255,0.5); text-shadow: 1px 1px 0 #000;
+      min-width: 40px; text-align: right; margin-left: 6px;
+    }
+
+    /* Pachinko timer bar */
+    #pachinko-timer-bar {
+      position: absolute; top: 0; left: 500px; width: 1420px; height: 6px;
+      z-index: 10; background: rgba(0,0,0,0.4);
+    }
+    #pachinko-timer-fill {
+      height: 100%; background: linear-gradient(90deg, #FFD700, #ff8c00);
+      transition: width 0.5s linear;
+      box-shadow: 0 0 10px rgba(255,215,0,0.5);
+    }
+
+    /* Winner overlay */
+    #pachinko-winner {
+      display: none; position: fixed; top: 0; left: 0; width: 1920px; height: 1080px;
+      z-index: 99999; pointer-events: none;
+      justify-content: center; align-items: center;
+    }
+    #pachinko-winner-bg {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      background: radial-gradient(ellipse at center, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.95) 100%);
+    }
+    #pachinko-winner-content {
+      position: relative; text-align: center;
+    }
+    #pachinko-winner-title {
+      font-family: 'Impact', 'Arial Black', sans-serif; font-size: 60px; font-weight: 900;
+      color: #FFD700; text-shadow: 4px 4px 0 #000, 0 0 40px rgba(255,215,0,0.6);
+      letter-spacing: 5px; margin-bottom: 20px;
+      animation: raceWinPulse 0.8s ease-in-out infinite;
+    }
+    #pachinko-winner-name {
+      font-family: 'Impact', 'Arial Black', sans-serif; font-size: 90px; font-weight: 900;
+      color: #fff; text-shadow: 4px 4px 0 #000, 0 0 30px rgba(255,255,255,0.4);
+      animation: raceWinPulse 0.6s ease-in-out infinite;
+    }
+    #pachinko-winner-score {
+      font-size: 40px; font-weight: 900; color: #4CAF50;
+      text-shadow: 3px 3px 0 #000; margin-top: 10px;
+    }
+
+    .hidden { display: none !important; }
+    .waiting { opacity: 0; }
+    .spiral-to-lane { position: absolute !important; z-index: 99998 !important; will-change: transform; pointer-events: none; }
+    .spiral-to-lane .nick { transition: font-size 1.2s ease-in; font-size: 22px !important; }
+
+    /* === FIGHT HUD === */
+    #fight-hud {
+      display: none; position: fixed; top: 0; left: 0; width: 1920px; height: 1080px;
+      z-index: 90000; pointer-events: none;
+    }
+    .hp-bar-container {
+      position: absolute; top: 40px; width: 700px; height: 40px;
+      border-radius: 8px; overflow: hidden;
+      border: 3px solid #fff; box-shadow: 0 0 20px rgba(0,0,0,0.7);
+    }
+    .hp-bar-container.left  { left: 50px; }
+    .hp-bar-container.right { right: 50px; }
+    .hp-bar-bg { width: 100%; height: 100%; background: #333; }
+    .hp-bar-fill { height: 100%; transition: width 0.3s ease-out; }
+    .hp-bar-fill.left  { background: linear-gradient(90deg, #dc322f, #ff6b6b); float: left; }
+    .hp-bar-fill.right { background: linear-gradient(90deg, #6bc5ff, #268bd2); float: right; }
+    .hp-label {
+      position: absolute; top: 44px; font-size: 22px; font-weight: 900;
+      color: white; text-shadow: 2px 2px 0 #000;
+    }
+    .hp-label.left  { left: 50px; }
+    .hp-label.right { right: 50px; }
+
+    #fight-text {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      font-size: 120px; font-weight: 900; color: #dc322f;
+      text-shadow: 4px 4px 0 #000, 0 0 40px rgba(220,50,47,0.6);
+      font-family: 'Impact', 'Arial Black', sans-serif;
+      letter-spacing: 10px; display: none;
+      animation: fightPulse 0.3s ease-in-out 3;
+    }
+    @keyframes fightPulse {
+      0%,100%{transform:translate(-50%,-50%) scale(1)} 50%{transform:translate(-50%,-50%) scale(1.15)}
+    }
+
+    #fight-winner-text {
+      position: absolute; top: 35%; left: 50%; transform: translate(-50%,-50%);
+      font-size: 70px; font-weight: 900; color: #b58900;
+      text-shadow: 3px 3px 0 #000, 0 0 30px rgba(181,137,0,0.5);
+      font-family: 'Impact', 'Arial Black', sans-serif;
+      display: none;
+    }
+
+  </style>
+</head>
+<body>
+
+  <div id="container"></div>
+
+  <!-- FIGHT HUD -->
+  <div id="fight-hud">
+    <div class="hp-bar-container left"><div class="hp-bar-bg"><div class="hp-bar-fill left" id="hp-left" style="width:100%"></div></div></div>
+    <div class="hp-label left" id="hp-label-left">EQUIPO ROJO</div>
+    <div class="hp-bar-container right"><div class="hp-bar-bg"><div class="hp-bar-fill right" id="hp-right" style="width:100%"></div></div></div>
+    <div class="hp-label right" id="hp-label-right">EQUIPO AZUL</div>
+    <div id="fight-text">FIGHT!</div>
+    <div id="fight-winner-text"></div>
+  </div>
+
+  <!-- RACE WINNER -->
+  <div id="race-winner"></div>
+
+  <!-- PACHINKO HUD -->
+  <div id="pachinko-hud">
+    <div id="pachinko-scores">
+      <div id="pachinko-scores-title">🎰 PACHINKO</div>
+      <div id="pachinko-scores-list"></div>
+    </div>
+    <div id="pachinko-board"></div>
+    <div id="pachinko-timer-bar"><div id="pachinko-timer-fill" style="width:100%"></div></div>
+  </div>
+
+  <!-- PACHINKO WINNER -->
+  <div id="pachinko-winner">
+    <div id="pachinko-winner-bg"></div>
+    <div id="pachinko-winner-content">
+      <div id="pachinko-winner-title">🏆 PACHINKO WINNER 🏆</div>
+      <div id="pachinko-winner-name"></div>
+      <div id="pachinko-winner-score"></div>
+    </div>
+  </div>
+
+  <!-- PING audio preloaded for new-user alerts -->
+  <audio id="ping-audio" src="ping.ogg" preload="auto"></audio>
+  <audio id="pachinko-gold-audio" src="gold.ogg" preload="auto"></audio>
+  <audio id="pachinko-bad-audio" src="bad.ogg" preload="auto"></audio>
+
+  <script>
+    // ─── Parámetros desde el HASH (nunca se envían al servidor) ──────────────
+    function getHashParams() {
+      const p = {};
+      const hash = window.location.hash.slice(1);
+      for (const part of hash.split('&')) {
+        const [k, v] = part.split('=');
+        if (k) p[decodeURIComponent(k)] = decodeURIComponent(v || '');
+      }
+      return p;
+    }
+    const hp = getHashParams();
+
+    // Feature flags (default true si no se especifica)
+    const FEAT_PIXEL      = hp.pixel      !== 'false';
+    const FEAT_TRADUCTOR  = hp.traductor  !== 'false';
+
+    // Pixel overlay params
+    let channelParam = hp.channel || 'laumehdi';
+    const CHANNEL        = channelParam.toLowerCase();
+    const CHANNEL_ID     = hp.channel_id || '';
+
+    // ── Auth #1: primary account ──────────────────────────────────────────────
+    // NO se usa para escribir — así los mensajes del owner nunca se reenvían
+    const CHANNEL_TOKEN  = hp.channel_token || '';
+    const PUBSUB_TOKEN   = CHANNEL_TOKEN;
+
+    // Client ID — required for event subscription API
+    // se usa automáticamente el client_id de esa app.
+    const CLIENT_ID      = hp.client_id || 'gp762nuuoqcoxypju8c569th9wz7q5';
+
+    // ── Auth #2: relay account ──────────────────────────────────────────────
+    // Uso: escribir traducciones y responder comandos en el chat
+    // y nunca con la cuenta principal — protección contra mensajes maliciosos.
+    const BOT_NICK       = hp.bot_nick || '';
+    const BOT_TOKEN      = hp.bot_token ? (hp.bot_token.startsWith('oauth:') ? hp.bot_token : 'oauth:' + hp.bot_token) : '';
+    const BOT_OWNER      = CHANNEL;
+    // Google Translate endpoint (gtx) — gratuito, sin API key, sin CORS issues.
+    const TRANSLATE_URL = 'https://translate.googleapis.com/translate_a/single';
+    let translationErrorReported = false;
+
+
+    let drawings = [], rainMode = false;
+
+    async function botTranslate(user, msg) {
+      const original = msg.trim();
+      const cleaned  = botCleanText(original);
+      if (!botRichEnough(cleaned)) {
+        console.log('[traductor] ⏭️ texto no suficiente:', JSON.stringify(cleaned), '(len:', cleaned.length, ')');
+        return null;
+      }
+      const isOwner = user.toLowerCase() === BOT_OWNER.toLowerCase();
+      const targetLang = isOwner ? 'en' : 'es';
+
+      try {
+        const gUrl = TRANSLATE_URL + '?client=gtx&sl=auto&tl=' + targetLang + '&dt=t&q=' + encodeURIComponent(original);
+        const res = await fetch(gUrl);
+        if (!res.ok) {
+          const e = 'HTTP ' + res.status;
+          if (!translationErrorReported) { translationErrorReported = true; botSendChat('⚠️ Traducción no disponible — ' + e); }
+          return null;
+        }
+        const data = await res.json();
+        // Response: [[["translated","original",null,null,10],...],null,"detected_lang"]
+        let translated = '';
+        if (Array.isArray(data) && Array.isArray(data[0])) {
+          for (const segment of data[0]) {
+            if (Array.isArray(segment) && segment[0]) translated += segment[0];
+          }
+        }
+        translated = translated.trim();
+        const detected = (Array.isArray(data) && data[2]) ? data[2].toLowerCase() : '';
+
+        console.log('[traductor] 🌐 Google response → detected:', detected, '| translated:', translated?.slice(0, 80));
+        if (!translated) { return null; }
+
+        translationErrorReported = false;
+
+        // Descartar si ya está en el idioma target
+        if (!isOwner && detected === 'es') { return null; }
+        if (isOwner && detected === 'en') { return null; }
+        if (translated.toLowerCase() === original.toLowerCase()) { return null; }
+
+        const arrow = (detected||'?') + ' > ' + targetLang;
+        return translated + ' [' + user + '] (' + arrow + ')';
+      } catch(e) {
+        console.error('[traductor] ❌ Google Translate:', e.message);
+        if (!translationErrorReported) { translationErrorReported = true; botSendChat('⚠️ Traducción no disponible — ' + e.message); }
+        return null;
+      }
+    }
+    let subQueue = [], isShowcaseBusy = false, ws = null, activeCodes = new Set();
+    let showcaseTimer = null;
+    let globalSpeedMultiplier = 0.54;
+    let testMode = false;
+    let lastTime = performance.now();
+
+    // === EVENT SYSTEM STATE ===
+    let activeEvent = null; // 'boom'|'pogo'|'fight'|'volcano'|'confetti'|'tornado'|'thriller'|'taiko'|'quake'|'race'|'space'|'whirlpool'|'pachinko'|null
+    let eventTimer = null;
+    let fightState = null;
+
+    // === UNIFIED REWARD QUEUE ===
+    // ALL paid rewards (except Borrar) go through this queue.
+    // Each item has: name, fn (what to execute), duration (ms, 0 = instant/self-timed)
+    let rewardQueue = [];
+    let rewardBusy = false; // true when ANY reward is executing
+    let rewardTimer = null;
+
+    // Helper: make a drawing join whatever event is currently active
+    function joinActiveEvent(d) {
+      d.el.classList.remove('jumping');
+      if (activeEvent === 'boom') { assignBoomPhysics(d); }
+      else if (activeEvent === 'pogo') { d.boomVx=(Math.random()-0.5)*8; d.boomVy=-(14+Math.random()*10); d.boomRot=0; d.boomRotSpeed=(Math.random()-0.5)*10; }
+      else if (activeEvent === 'volcano') { d.x=880+(Math.random()-0.5)*200; d.y=1080; d.boomVy=-(18+Math.random()*16); d.boomVx=(Math.random()-0.5)*12; d.boomRot=0; d.boomRotSpeed=(Math.random()-0.5)*10; }
+      else if (activeEvent === 'confetti') { d.x=Math.random()*1800; d.y=950; d.boomVy=-(12+Math.random()*18); d.boomVx=(Math.random()-0.5)*10; d.boomRot=0; d.boomRotSpeed=(Math.random()-0.5)*14; }
+      else if (activeEvent === 'tornado') { d.tornadoAngle=Math.random()*Math.PI*2; d.tornadoRadius=300+Math.random()*400; d.tornadoStart=Date.now()-5000; d.boomRot=0; d.fightPhase=Math.random()*7; }
+      else if (activeEvent === 'thriller') { d.tornadoStart=Date.now(); d.fightPhase=Math.random()*7; d.thrillerDir=(Math.random()>0.5)?1:-1; d.thrillerY=200+Math.random()*600; d.x=Math.random()*1800; }
+      else if (activeEvent === 'taiko') { d.tornadoStart=Date.now()-2000; const sl=calcTaikoSlots(drawings.length); drawings.forEach((dd,ii)=>{dd.taikoSlotX=sl[ii].x;dd.taikoSlotY=sl[ii].y;}); }
+      else if (activeEvent === 'quake') { d.boomVy=-(5+Math.random()*10); d.boomVx=(Math.random()-0.5)*10; d.boomRot=0; d.boomRotSpeed=(Math.random()-0.5)*8; }
+      else if (activeEvent === 'race') { d.x=-100; d.y=880; d.raceSpeed=0.2; d.raceMult=0.4+Math.random()*1.2; d.raceFinished=false; }
+      else if (activeEvent === 'space') { const a=Math.random()*Math.PI*2; const sp=1.5+Math.random()*2.5; d.boomVx=Math.cos(a)*sp; d.boomVy=Math.sin(a)*sp; d.boomRot=0; d.boomRotSpeed=(Math.random()-0.5)*4; }
+      else if (activeEvent === 'whirlpool') { d.tornadoStart=Date.now(); d.whirlAngle=Math.random()*Math.PI*2; d.whirlRadius=200+Math.random()*500; d.whirlVr=0; d.boomRot=0; d.fightPhase=Math.random()*7; }
+      else if (activeEvent === 'pachinko') {
+        // New drawing during pachinko
+        d.el.style.opacity = 0; // hide normal drawing
+        if (pachinkoState) {
+          const BALLS_PER_USER = PACH.ballsPerDrawing;
+          if (!pachinkoState.scores[d.user]) {
+            // Brand new user joining mid-game: gets full allocation
+            pachinkoState.scores[d.user] = { pts: 0, total: BALLS_PER_USER, remaining: BALLS_PER_USER };
+            for (let b = 0; b < BALLS_PER_USER; b++) {
+              pachinkoState.ballQueue.push(d);
+            }
+            pachinkoState.totalBalls += BALLS_PER_USER;
+          }
+          // Existing user adding another drawing: no extra balls (balance!)
+          if (pachinkoState.phase === 'settling') pachinkoState.phase = 'dropping';
+          updatePachinkoScores();
+        }
+      }
+      else if (activeEvent === 'fight' && fightState) {
+        const side = Math.random()<0.5?'left':'right';
+        const team = side==='left'?fightState.leftTeam:fightState.rightTeam;
+        d.fightSide=side; d.fightDead=false;
+        d.el.classList.add(side==='left'?'fight-red':'fight-blue');
+        d.fightHP=1; d.fightMaxHP=1;
+        d.fightSlotX=side==='left'?80+Math.random()*250:1550+Math.random()*200;
+        d.fightSlotY=150+Math.random()*650;
+        team.push(d);
+        if(side==='left'){fightState.leftTotalHP+=d.fightHP;fightState.leftMaxHP+=d.fightHP;}
+        else{fightState.rightTotalHP+=d.fightHP;fightState.rightMaxHP+=d.fightHP;}
+        document.getElementById('hp-left').style.width = Math.max(0, fightState.leftTotalHP / fightState.leftMaxHP * 100) + '%';
+        document.getElementById('hp-right').style.width = Math.max(0, fightState.rightTotalHP / fightState.rightMaxHP * 100) + '%';
+        document.getElementById('hp-label-left').textContent = `🔴 EQUIPO ROJO (${fightState.leftTeam.filter(dd=>!dd.fightDead).length})`;
+        document.getElementById('hp-label-right').textContent = `🔵 EQUIPO AZUL (${fightState.rightTeam.filter(dd=>!dd.fightDead).length})`;
+      }
+    }
+
+    function queueReward(name, fn, duration, onEnd) {
+      if (rewardBusy) {
+        rewardQueue.push({ name, fn, duration, onEnd });
+        return;
+      }
+      executeReward(name, fn, duration, onEnd);
+    }
+
+    let activeRewardOnEnd = null;
+
+    function executeReward(name, fn, duration, onEnd) {
+      rewardBusy = true;
+      activeRewardOnEnd = onEnd || null;
+      fn();
+      if (duration > 0) {
+        rewardTimer = setTimeout(() => finishReward(), duration);
+      }
+      // Events with duration=0 end themselves via endEvent()
+    }
+
+    function finishReward() {
+      if (rewardTimer) { clearTimeout(rewardTimer); rewardTimer = null; }
+      // Run cleanup callback if any
+      if (activeRewardOnEnd) { activeRewardOnEnd(); activeRewardOnEnd = null; }
+      rewardBusy = false;
+      // Process next in queue
+      if (rewardQueue.length > 0) {
+        const next = rewardQueue.shift();
+        executeReward(next.name, next.fn, next.duration, next.onEnd);
+      }
+    }
+
+    // Helper for events that self-manage their duration via endEvent()
+    function queueOrRun(eventName, triggerFn) {
+      queueReward(eventName, triggerFn, 0);
+    }
+
+    // === FIGHT SOUNDS ===
+    // Files must be in the same directory as this HTML
+    function playSound(src, volume = 1.0) {
+      try {
+        const audio = new Audio(src);
+        audio.volume = volume;
+        audio.play().catch(() => {}); // ignore autoplay errors silently
+      } catch(e) {}
+    }
+    const SFX = {
+      sword: 'sword.ogg',
+      shield: 'shield.ogg',
+      wilhelm: 'wilhelmscream.ogg',
+      win: 'win.ogg',
+      fight: 'fight.ogg',
+      gold: 'gold.ogg',
+      bad: 'bad.ogg'
+    };
+
+    const LANES = [10, 40, 70, 100], SPEEDS = [2, 3.5, 2.5, 4.5], Z_INDEXES = [5, 20, 10, 30];
+
+
+    function getMinXInLane(laneIdx, excludeObj) {
+      let minX = Infinity;
+      drawings.forEach(d => {
+        if (d !== excludeObj && d.lane === laneIdx && !d.el.classList.contains('showcase')) {
+          if (d.x < minX) minX = d.x;
+        }
+      });
+      return minX === Infinity ? -200 : minX;
+    }
+
+    function assignBoomPhysics(d) {
+      d.el.classList.remove('jumping');
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 3 + Math.random() * 5;
+      d.boomVx = Math.cos(angle) * speed;
+      d.boomVy = Math.sin(angle) * speed;
+      d.boomRot = 0;
+      d.boomRotSpeed = (Math.random() - 0.5) * 12;
+    }
+
+    // Restore all drawings to normal lane walking after any event
+    function restoreToLanes() {
+      drawings.forEach((d, idx) => {
+        if (d.el.classList.contains('showcase') || d.el.classList.contains('waiting')) return;
+        d.el.style.opacity = 1;
+        d.el.classList.remove('jumping', 'fight-red', 'fight-blue');
+        const laneIdx = idx % LANES.length;
+        d.lane = laneIdx; d.y = LANES[laneIdx]; d.speed = SPEEDS[laneIdx];
+        d.el.style.zIndex = Z_INDEXES[laneIdx];
+        d.x = getMinXInLane(laneIdx, d) - 350;
+        d.el.style.transform = `translate3d(${d.x}px, ${d.y}px, 0)`;
+        d.fightSide = undefined;
+        d.fightDead = false;
+      });
+    }
+
+    function endEvent() {
+      if (eventTimer) { clearTimeout(eventTimer); eventTimer = null; }
+      const evName = activeEvent;
+      activeEvent = null;
+      fightState = null;
+      document.getElementById('fight-hud').style.display = 'none';
+      document.getElementById('container').classList.remove('screen-shake');
+      document.getElementById('race-winner').classList.remove('show');
+      // Clean up pachinko
+      if (evName === 'pachinko') { cleanupPachinko(); }
+      // If there's a queued reward, skip restoring to lanes
+      if (rewardQueue.length > 0) {
+        finishReward();
+        return;
+      }
+      restoreToLanes();
+      finishReward();
+    }
+
+    function isEventActive() { return activeEvent !== null; }
+
+    // === EXPLOSION PARTICLES ===
+    function spawnExplosion(x, y) {
+      const particleCount = 12;
+      const container = document.getElementById('container');
+      for (let i = 0; i < particleCount; i++) {
+        const p = document.createElement('div');
+        const size = 6 + Math.random() * 10;
+        const angle = (Math.PI * 2 / particleCount) * i + (Math.random() - 0.5) * 0.5;
+        const speed = 80 + Math.random() * 120;
+        const dx = Math.cos(angle) * speed;
+        const dy = Math.sin(angle) * speed;
+        const colors = ['#dc322f','#cb4b16','#b58900','#ffff55','#ff5555','#ffffff'];
+        const color = colors[Math.floor(Math.random() * colors.length)];
+        
+        p.style.cssText = `position:absolute;left:${x + 80}px;top:${y + 80}px;width:${size}px;height:${size}px;background:${color};border-radius:50%;pointer-events:none;z-index:99990;box-shadow:0 0 ${size}px ${color};`;
+        container.appendChild(p);
+        
+        const startTime = performance.now();
+        const duration = 400 + Math.random() * 300;
+        
+        function animParticle(now) {
+          const elapsed = now - startTime;
+          const progress = Math.min(elapsed / duration, 1);
+          const ease = 1 - Math.pow(1 - progress, 2);
+          const px = x + 80 + dx * ease;
+          const py = y + 80 + dy * ease - 30 * ease; // slight upward arc
+          const scale = 1 - progress * 0.7;
+          const opacity = 1 - progress;
+          p.style.transform = `translate(${dx * ease}px, ${dy * ease - 40 * ease}px) scale(${scale})`;
+          p.style.opacity = opacity;
+          if (progress < 1) requestAnimationFrame(animParticle);
+          else p.remove();
+        }
+        requestAnimationFrame(animParticle);
+      }
+    }
+
+    // ==============================================================
+    //  MAIN ANIMATION LOOP
+    // ==============================================================
+    function animate(currentTime) {
+      if (!currentTime) currentTime = performance.now();
+      const dt = Math.min((currentTime - lastTime) / 16.666, 3);
+      lastTime = currentTime;
+      const now = Date.now();
+
+      // Fight logic tick
+      if (activeEvent === 'fight' && fightState && fightState.phase === 'fighting') {
+        fightTick(dt);
+      }
+
+      // Pachinko logic tick
+      if (activeEvent === 'pachinko' && pachinkoState) {
+        pachinkoTick(dt, now);
+      }
+
+      for (let i = drawings.length - 1; i >= 0; i--) {
+        let d = drawings[i];
+        if (d.el.classList.contains('showcase') || d.el.classList.contains('hidden') || d.el.classList.contains('spiral-to-lane')) continue;
+        if (d.el.classList.contains('waiting')) { d.el.style.transform = 'translate3d(-500px,-500px,0)'; continue; }
+
+        // === BOOM (with collisions) ===
+        if (activeEvent === 'boom') {
+          d.el.style.opacity = 1;
+          d.x += d.boomVx * dt; d.y += d.boomVy * dt; d.boomRot += d.boomRotSpeed * dt;
+          if (d.x < -80) { d.x=-80; d.boomVx=Math.abs(d.boomVx); }
+          if (d.x > 1840) { d.x=1840; d.boomVx=-Math.abs(d.boomVx); }
+          if (d.y < -80) { d.y=-80; d.boomVy=Math.abs(d.boomVy); }
+          if (d.y > 980) { d.y=980; d.boomVy=-Math.abs(d.boomVy); }
+          // Collisions with other drawings
+          for (let j = i - 1; j >= 0; j--) {
+            const o = drawings[j];
+            if (o.el.classList.contains('showcase')||o.el.classList.contains('hidden')) continue;
+            const dx = d.x - o.x, dy = d.y - o.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            if (dist < 140 && dist > 0) {
+              const nx = dx/dist, ny = dy/dist;
+              const overlap = (140 - dist) / 2;
+              d.x += nx * overlap; d.y += ny * overlap;
+              o.x -= nx * overlap; o.y -= ny * overlap;
+              // Swap velocity components along collision axis
+              const dvx = d.boomVx - o.boomVx, dvy = d.boomVy - o.boomVy;
+              const dot = dvx * nx + dvy * ny;
+              if (dot > 0) {
+                d.boomVx -= dot * nx * 0.8; d.boomVy -= dot * ny * 0.8;
+                o.boomVx += dot * nx * 0.8; o.boomVy += dot * ny * 0.8;
+                d.boomRotSpeed += (Math.random()-0.5)*4;
+                o.boomRotSpeed += (Math.random()-0.5)*4;
+              }
+            }
+          }
+          d.el.style.transform = `translate3d(${d.x}px,${d.y}px,0) rotate(${d.boomRot}deg)`;
+          continue;
+        }
+
+        // === POGO ===
+        if (activeEvent === 'pogo') {
+          d.el.style.opacity = 1;
+          d.boomVy += 0.35 * dt; // gravity (lower = longer airtime)
+          d.y += d.boomVy * dt;
+          d.x += d.boomVx * dt;
+          // bounce off floor — BIG launch upward
+          if (d.y > 820) { d.y = 820; d.boomVy = -(12 + Math.random() * 10); }
+          // bounce off walls
+          if (d.x < -80) { d.x = -80; d.boomVx = Math.abs(d.boomVx); }
+          if (d.x > 1840) { d.x = 1840; d.boomVx = -Math.abs(d.boomVx); }
+          d.boomRot += d.boomRotSpeed * dt;
+          d.el.style.transform = `translate3d(${d.x}px,${d.y}px,0) rotate(${d.boomRot}deg)`;
+          continue;
+        }
+
+        // === VOLCANO ===
+        if (activeEvent === 'volcano') {
+          d.el.style.opacity = 1;
+          d.boomVy += 0.25 * dt; // lighter gravity for high arcs
+          d.y += d.boomVy * dt;
+          d.x += d.boomVx * dt;
+          // Slight wind drift
+          d.boomVx += Math.sin(now / 1000 + d.fightPhase) * 0.02 * dt;
+          // When they fall below screen, re-erupt from volcano
+          if (d.y > 1100) {
+            d.x = 880 + (Math.random() - 0.5) * 200; // center-ish
+            d.y = 1080;
+            d.boomVy = -(16 + Math.random() * 14); // big upward blast
+            d.boomVx = (Math.random() - 0.5) * 10; // spread out horizontally
+          }
+          // Cap at top of screen — bounce gently
+          if (d.y < -200) { d.y = -200; d.boomVy = Math.abs(d.boomVy) * 0.3; }
+          d.boomRot += d.boomRotSpeed * dt;
+          d.el.style.transform = `translate3d(${d.x}px,${d.y}px,0) rotate(${d.boomRot}deg)`;
+          continue;
+        }
+
+        // === CONFETTI (Salto) ===
+        if (activeEvent === 'confetti') {
+          d.el.style.opacity = 1;
+          // Strong gravity — they have WEIGHT, fall fast
+          d.boomVy += 0.55 * dt;
+          d.y += d.boomVy * dt;
+          d.x += d.boomVx * dt;
+          // Horizontal wobble like paper
+          d.boomVx += Math.sin(now / 300 + d.fightPhase * 4) * 0.08 * dt;
+          // Dampen horizontal slightly
+          d.boomVx *= 0.999;
+          // When hitting the floor, re-launch upward (slower going up, fast coming down)
+          if (d.y > 950) {
+            d.y = 950;
+            d.boomVy = -(10 + Math.random() * 16); // upward impulse (slower than gravity pull)
+            d.boomVx = (Math.random() - 0.5) * 8; // new random horizontal spread
+          }
+          // Bounce off walls
+          if (d.x < -80) { d.x = -80; d.boomVx = Math.abs(d.boomVx); }
+          if (d.x > 1840) { d.x = 1840; d.boomVx = -Math.abs(d.boomVx); }
+          d.boomRot += d.boomRotSpeed * dt;
+          d.el.style.transform = `translate3d(${d.x}px,${d.y}px,0) rotate(${d.boomRot}deg)`;
+          continue;
+        }
+
+        // === TORNADO ===
+        if (activeEvent === 'tornado') {
+          d.el.style.opacity = 1;
+          // Elapsed time for phase changes
+          const elapsed = (now - d.tornadoStart) / 1000; // seconds
+          
+          // Radius shrinks over first 5s (gathering), then pulses
+          let targetRadius;
+          if (elapsed < 5) {
+            targetRadius = 600 - elapsed * 90; // 600 -> 150
+          } else {
+            targetRadius = 150 + Math.sin(elapsed * 0.8) * 80; // pulses 70-230
+          }
+          d.tornadoRadius += (targetRadius - d.tornadoRadius) * 0.03 * dt;
+          
+          // Spin speed accelerates over time, caps at ~0.08
+          const spinSpeed = Math.min(0.08, 0.015 + elapsed * 0.003);
+          d.tornadoAngle += spinSpeed * dt;
+          
+          // Vertical oscillation — drawings ride up and down like a real tornado
+          const vertBase = 500; // center Y
+          const vertAmp = 250 + Math.sin(elapsed * 0.5 + d.fightPhase) * 100;
+          const vertTarget = vertBase + Math.sin(d.tornadoAngle * 0.7 + d.fightPhase * 2) * vertAmp;
+          d.y += (vertTarget - d.y) * 0.04 * dt;
+          
+          // Horizontal: orbit around center
+          const centerX = 960;
+          const targetX = centerX + Math.cos(d.tornadoAngle + d.fightPhase) * d.tornadoRadius;
+          d.x += (targetX - d.x) * 0.06 * dt;
+          
+          // Fast spin rotation
+          d.boomRot += (spinSpeed * 400 + 2) * dt;
+          
+          // Slight scale variation based on height (smaller when "higher")
+          const heightFactor = 1 - (d.y - 250) / 1200 * 0.3; // 0.85 to 1.1ish
+          const scale = Math.max(0.6, Math.min(1.2, heightFactor));
+          
+          d.el.style.transform = `translate3d(${d.x}px,${d.y}px,0) rotate(${d.boomRot}deg) scale(${scale.toFixed(2)})`;
+          continue;
+        }
+
+        // === THRILLER (Zombie dance) ===
+        if (activeEvent === 'thriller') {
+          d.el.style.opacity = 1;
+          const elapsed = (now - d.tornadoStart) / 1000;
+          
+          // Slow zombie drift — all shuffling in same direction, wrapping around
+          d.x += 0.7 * dt * d.thrillerDir;
+          if (d.x > 1950) d.x = -150;
+          if (d.x < -200) d.x = 1900;
+          
+          // Zombie lurch — uneven, jerky forward-back motion
+          const lurch = Math.sin(elapsed * 1.2 + d.fightPhase) * 15;
+          const stumble = Math.sin(elapsed * 0.4 + d.fightPhase * 3) * 30;
+          const yBase = d.thrillerY + stumble;
+          
+          // Tilted lean — zombies lean forward, occasionally jerk upright
+          const tilt = 8 + Math.sin(elapsed * 1.8 + d.fightPhase * 2) * 12;
+          
+          // Spasmodic twitch every few seconds
+          const twitch = (Math.sin(elapsed * 7 + d.fightPhase * 5) > 0.92) ? 
+            (Math.random() - 0.5) * 20 : 0;
+          
+          // Arms-out stretch effect via scaleX
+          const stretch = 1 + Math.sin(elapsed * 0.9 + d.fightPhase) * 0.08;
+          
+          d.el.style.transform = `translate3d(${d.x + lurch}px,${yBase}px,0) rotate(${tilt + twitch}deg) scaleX(${stretch.toFixed(2)})`;
+          continue;
+        }
+
+        // === TAIKO (Synchronized dance) ===
+        if (activeEvent === 'taiko') {
+          d.el.style.opacity = 1;
+          const elapsed = (now - d.tornadoStart) / 1000;
+          
+          // All drawings use the SAME time-based animation — perfectly synchronized
+          // The beat cycle is 2 seconds
+          const beat = (elapsed % 2) / 2; // 0 to 1 repeating
+          
+          // Formation: drawings line up evenly across the screen
+          const targetX = d.taikoSlotX;
+          d.x += (targetX - d.x) * 0.05 * dt;
+          
+          // Synchronized moves — all do the same thing at the same time
+          let yOff = 0, rot = 0, scX = 1, scY = 1;
+          
+          if (beat < 0.15) {
+            // JUMP UP — everybody jumps
+            const jumpProgress = beat / 0.15;
+            yOff = -Math.sin(jumpProgress * Math.PI) * 80;
+          } else if (beat < 0.25) {
+            // LAND — squash
+            const squashProgress = (beat - 0.15) / 0.1;
+            scY = 1 - (1 - squashProgress) * 0.3;
+            scX = 1 + (1 - squashProgress) * 0.15;
+          } else if (beat < 0.45) {
+            // LEAN LEFT
+            const leanProgress = (beat - 0.25) / 0.2;
+            rot = -Math.sin(leanProgress * Math.PI) * 25;
+          } else if (beat < 0.65) {
+            // LEAN RIGHT
+            const leanProgress = (beat - 0.45) / 0.2;
+            rot = Math.sin(leanProgress * Math.PI) * 25;
+          } else if (beat < 0.80) {
+            // WIGGLE — fast small oscillation
+            const wiggleProgress = (beat - 0.65) / 0.15;
+            rot = Math.sin(wiggleProgress * Math.PI * 6) * 12;
+            scX = 1 + Math.sin(wiggleProgress * Math.PI * 6) * 0.1;
+          } else {
+            // STRETCH UP — everybody reaches for the sky
+            const stretchProgress = (beat - 0.80) / 0.2;
+            scY = 1 + Math.sin(stretchProgress * Math.PI) * 0.25;
+            yOff = -Math.sin(stretchProgress * Math.PI) * 30;
+          }
+          
+          const baseY = d.taikoSlotY;
+          d.el.style.transform = `translate3d(${d.x}px,${baseY + yOff}px,0) rotate(${rot}deg) scale(${scX.toFixed(2)},${scY.toFixed(2)})`;
+          continue;
+        }
+
+        // === EARTHQUAKE (Terremoto) ===
+        if (activeEvent === 'quake') {
+          d.el.style.opacity = 1;
+          const elapsed = (now - d.tornadoStart) / 1000;
+          // Gravity
+          d.boomVy += 0.45 * dt;
+          d.y += d.boomVy * dt;
+          d.x += d.boomVx * dt;
+          // Floor bounce — keep them bouncing, don't let them settle
+          if (d.y > 800) {
+            d.y = 800;
+            d.boomVy = -(6 + Math.random() * 8); // always bounce back up visibly
+            d.boomVx += (Math.random() - 0.5) * 5;
+          }
+          // Periodic strong aftershocks — big relaunches
+          if (Math.random() < 0.02 * dt) {
+            d.boomVy = -(12 + Math.random() * 14);
+            d.boomVx = (Math.random() - 0.5) * 12;
+            d.boomRotSpeed = (Math.random() - 0.5) * 15;
+          }
+          // Wall bounce
+          if (d.x < -80) { d.x = -80; d.boomVx = Math.abs(d.boomVx); }
+          if (d.x > 1840) { d.x = 1840; d.boomVx = -Math.abs(d.boomVx); }
+          if (d.y < -100) { d.y = -100; d.boomVy = Math.abs(d.boomVy) * 0.5; }
+          d.boomRot += d.boomRotSpeed * dt;
+          // Dampen rotation slightly
+          d.boomRotSpeed *= 0.998;
+          d.el.style.transform = `translate3d(${d.x}px,${d.y}px,0) rotate(${d.boomRot}deg)`;
+          continue;
+        }
+
+        // === RACE (Carrera) ===
+        if (activeEvent === 'race') {
+          d.el.style.opacity = 1;
+          if (!d.raceFinished) {
+            // Each drawing has its own raceMult (0.4 to 1.6) — big spread
+            d.raceSpeed += (0.001 + Math.random() * 0.002) * d.raceMult * dt;
+            // Bursts and stumbles — more dramatic
+            if (Math.random() < 0.005 * dt) d.raceSpeed += (0.2 + Math.random() * 0.4) * d.raceMult;
+            if (Math.random() < 0.004 * dt) d.raceSpeed *= 0.5; // big stumble
+            d.raceSpeed = Math.min(d.raceSpeed, 1.5 * d.raceMult);
+            d.x += d.raceSpeed * dt;
+            const wobble = Math.sin(now / 120 + d.fightPhase * 10) * (1 + d.raceSpeed * 0.6);
+            const lean = d.raceSpeed * 3;
+            d.el.style.transform = `translate3d(${d.x}px,${d.y + wobble}px,0) rotate(${Math.min(lean, 12)}deg)`;
+            if (d.x > 1850 && !d.raceFinished) {
+              d.raceFinished = true;
+              const alreadyFinished = drawings.filter(dd => dd.raceFinished && dd !== d);
+              if (alreadyFinished.length === 0) {
+                const winEl = document.getElementById('race-winner');
+                winEl.innerText = `🏆 ${d.user.toUpperCase()} 🏆`;
+                winEl.classList.add('show');
+                if (eventTimer) clearTimeout(eventTimer);
+                eventTimer = setTimeout(endEvent, 3000);
+              }
+            }
+          } else {
+            const bob = Math.sin(now / 400) * 3;
+            d.el.style.transform = `translate3d(${d.x}px,${d.y + bob}px,0)`;
+          }
+          continue;
+        }
+
+        // === ESPACIO (Space — like boom but floaty, no gravity) ===
+        if (activeEvent === 'space') {
+          d.el.style.opacity = 1;
+          // No gravity — they just float freely
+          d.x += d.boomVx * dt;
+          d.y += d.boomVy * dt;
+          // Slow gentle rotation
+          d.boomRot += d.boomRotSpeed * dt * 0.4;
+          // Bounce off all walls — stay inside canvas
+          if (d.x < -80) { d.x = -80; d.boomVx = Math.abs(d.boomVx); }
+          if (d.x > 1840) { d.x = 1840; d.boomVx = -Math.abs(d.boomVx); }
+          if (d.y < -80) { d.y = -80; d.boomVy = Math.abs(d.boomVy); }
+          if (d.y > 920) { d.y = 920; d.boomVy = -Math.abs(d.boomVy); }
+          // Collisions with other drawings
+          for (let j = i - 1; j >= 0; j--) {
+            const o = drawings[j];
+            if (o.el.classList.contains('showcase')||o.el.classList.contains('hidden')) continue;
+            const dx2 = d.x - o.x, dy2 = d.y - o.y;
+            const dist2 = Math.sqrt(dx2*dx2 + dy2*dy2);
+            if (dist2 < 140 && dist2 > 0) {
+              const nx = dx2/dist2, ny = dy2/dist2;
+              const overlap = (140 - dist2) / 2;
+              d.x += nx * overlap; d.y += ny * overlap;
+              o.x -= nx * overlap; o.y -= ny * overlap;
+              const dvx2 = d.boomVx - o.boomVx, dvy2 = d.boomVy - o.boomVy;
+              const dot2 = dvx2 * nx + dvy2 * ny;
+              if (dot2 > 0) {
+                d.boomVx -= dot2 * nx * 0.7; d.boomVy -= dot2 * ny * 0.7;
+                o.boomVx += dot2 * nx * 0.7; o.boomVy += dot2 * ny * 0.7;
+                d.boomRotSpeed += (Math.random()-0.5)*2;
+                o.boomRotSpeed += (Math.random()-0.5)*2;
+              }
+            }
+          }
+          d.el.style.transform = `translate3d(${d.x}px,${d.y}px,0) rotate(${d.boomRot}deg)`;
+          continue;
+        }
+
+        // === REMOLINO (Whirlpool) ===
+        if (activeEvent === 'whirlpool') {
+          d.el.style.opacity = 1;
+          const elapsed = (now - d.tornadoStart) / 1000;
+
+          // Center point drifts slowly around the screen
+          const centerX = 960 + Math.sin(elapsed * 0.3) * 200;
+          const centerY = 500 + Math.cos(elapsed * 0.4) * 150;
+
+          // Angular speed increases as radius shrinks (like real vortex physics)
+          const angularSpeed = 0.02 + (400 / Math.max(d.whirlRadius, 50)) * 0.01;
+          d.whirlAngle += angularSpeed * dt;
+
+          // Radial attraction — pull inward with pulsing strength
+          d.whirlVr -= (0.15 + 0.05 * Math.sin(elapsed * 2 + d.fightPhase)) * dt;
+          d.whirlRadius += d.whirlVr * dt;
+
+          // When very close to center, burst outward
+          if (d.whirlRadius < 40) {
+            d.whirlRadius = 40;
+            d.whirlVr = 8 + Math.random() * 6;
+            d.whirlAngle += (Math.random() - 0.5) * 1.5; // scatter angle
+          }
+
+          // Cap maximum radius
+          if (d.whirlRadius > 700) {
+            d.whirlRadius = 700;
+            d.whirlVr = -Math.abs(d.whirlVr) * 0.5;
+          }
+
+          // Slight damping on radial velocity
+          d.whirlVr *= 0.995;
+
+          // Calculate target position on the spiral
+          const targetX = centerX + Math.cos(d.whirlAngle) * d.whirlRadius;
+          const targetY = centerY + Math.sin(d.whirlAngle) * d.whirlRadius;
+          d.x += (targetX - d.x) * 0.08 * dt;
+          d.y += (targetY - d.y) * 0.08 * dt;
+
+          // Fast spin rotation
+          d.boomRot += (angularSpeed * 300 + 3) * dt;
+
+          // Scale: smaller near center (suction effect), normal further out
+          const scaleFactor = 0.4 + Math.min(d.whirlRadius / 500, 1) * 0.8;
+          const scale = Math.max(0.4, Math.min(1.3, scaleFactor));
+
+          d.el.style.transform = `translate3d(${d.x}px,${d.y}px,0) rotate(${d.boomRot}deg) scale(${scale.toFixed(2)})`;
+          continue;
+        }
+
+        // === FIGHT ===
+        if (activeEvent === 'fight') {
+          if (d.fightDead) { d.el.style.opacity = 0; continue; }
+          const fs = fightState;
+          if (fs) {
+            if (fs.phase === 'lineup') {
+              // Float to sides
+              const targetX = d.fightSide === 'left' ? d.fightSlotX : d.fightSlotX;
+              const targetY = d.fightSlotY;
+              d.x += (targetX - d.x) * 0.05 * dt;
+              d.y += (targetY - d.y) * 0.05 * dt;
+              // Idle bobbing
+              const bob = Math.sin(now / 600 + d.fightPhase) * 4;
+              d.el.style.transform = `translate3d(${d.x}px,${d.y + bob}px,0)`;
+            } else if (fs.phase === 'fighting') {
+              // Each fighter has their own orbit target that shifts over time
+              // Left team fights on the left-center, right team on the right-center
+              const baseX = d.fightSide === 'left' ? 700 : 1100;
+              const orbitX = baseX + Math.sin(now / 800 + d.fightPhase * 3) * 200;
+              const orbitY = d.fightSlotY + Math.cos(now / 600 + d.fightPhase * 2) * 80;
+              
+              // Charge toward their orbit point with some chaos
+              d.x += (orbitX - d.x) * 0.03 * dt + Math.sin(now/200 + d.fightPhase) * 3 * dt;
+              d.y += (orbitY - d.y) * 0.03 * dt + Math.cos(now/250 + d.fightPhase) * 2 * dt;
+              
+              // Occasional lunge toward the enemy side
+              const lunge = Math.sin(now / 400 + d.fightPhase * 5);
+              if (lunge > 0.7) {
+                const enemyDir = d.fightSide === 'left' ? 1 : -1;
+                d.x += enemyDir * 4 * dt;
+              }
+              
+              // Keep in bounds with margin
+              if (d.x < 300) d.x = 300; if (d.x > 1600) d.x = 1600;
+              if (d.y < 120) d.y = 120; if (d.y > 880) d.y = 880;
+              
+              const shake = Math.sin(now / 50 + d.fightPhase) * 3;
+              d.el.style.transform = `translate3d(${d.x}px,${d.y + shake}px,0)`;
+            } else if (fs.phase === 'victory') {
+              // Winners dance in center
+              if (d.fightDead) { d.el.style.opacity = 0; continue; }
+              const bob = Math.sin(now / 300 + d.fightPhase) * 15;
+              const sway = Math.sin(now / 500 + d.fightPhase) * 10;
+              d.el.style.transform = `translate3d(${d.x + sway}px,${d.y + bob}px,0) scale(1.3)`;
+            }
+          }
+          continue;
+        }
+
+        // === PACHINKO ===
+        if (activeEvent === 'pachinko') {
+          // Pachinko balls are handled by pachinkoTick — skip normal drawing animation
+          // Hide normal drawings during pachinko
+          d.el.style.opacity = 0;
+          continue;
+        }
+
+        // === RAIN ===
+        if (rainMode) {
+          d.el.style.opacity = 1; d.y += d.rainSpeed * dt;
+          d.x = d.rainOriginX + Math.sin((now/800)+d.rainPhase)*20;
+          d.el.style.transform = `translate3d(${d.x}px,${d.y}px,0)`;
+          if (d.y > 1100) { d.y = -180; d.rainOriginX = Math.random()*1800; }
+          continue;
+        }
+
+        // === DYING ===
+        if (d.dying) {
+          d.vy += 0.5*dt; d.y += d.vy*dt; d.rot += 5*dt;
+          d.el.style.transform = `translate3d(${d.x}px,${d.y}px,0) rotate(${d.rot}deg)`;
+          d.el.style.opacity = (1 - d.y/1500);
+          if (d.y > 1200) { d.el.remove(); activeCodes.delete(d.code); drawings.splice(i,1); }
+          continue;
+        }
+
+        // === NORMAL WALK ===
+        d.el.style.opacity = 1;
+        d.x += d.speed * globalSpeedMultiplier * dt;
+        if (d.x > 2200) {
+          d.loops++;
+          if (d.loops >= 1) d.el.classList.remove('jumping');
+          const oldLane = d.lane;
+          const nl = Math.floor(Math.random()*LANES.length);
+          d.lane=nl; d.y=LANES[nl]; d.speed=SPEEDS[nl]; d.el.style.zIndex=Z_INDEXES[nl];
+          d.x = Math.min(-200, getMinXInLane(nl, d) - 350);
+        }
+        d.el.style.transform = `translate3d(${d.x}px,${d.y}px,0)`;
+      }
+      requestAnimationFrame(animate);
+    }
+    requestAnimationFrame(animate);
+
+    // ==============================================================
+    //  WSS PROTOCOL HANDLER (unified — render + i18n)
+    // ==============================================================
+
+    // ── Traductor: helpers ────────────────────────────────────────
+    let botWs = null; // WebSocket separada para el bot (solo escritura)
+
+    function botSend(msg) {
+      if (botWs && botWs.readyState === WebSocket.OPEN) botWs.send(msg);
+    }
+    function botSendChat(text) { botSend('PRIVMSG #' + CHANNEL + ' :' + text + '\r\n'); }
+
+    function connectBot() {
+      if (!FEAT_TRADUCTOR) return;
+      if (!BOT_NICK || !hp.bot_token) {
+        console.warn('[traductor] faltan parámetros: bot_nick y/o bot_token');
+        return;
+      }
+      if (botWs) { try { botWs.close(); } catch(e){} }
+      botWs = new WebSocket('wss://irc-ws.chat.twitch.tv:443');
+      botWs.onopen = () => {
+        botWs.send('CAP REQ :twitch.tv/tags\r\n');
+        botWs.send('PASS ' + BOT_TOKEN + '\r\n');
+        botWs.send('NICK ' + BOT_NICK + '\r\n');
+        botWs.send('JOIN #' + CHANNEL + '\r\n');
+        if (botPingTimer) clearInterval(botPingTimer);
+        botPingTimer = setInterval(() => { botSend('PING :tmi.twitch.tv\r\n'); }, 4 * 60 * 1000);
+        botScheduleSocials();
+        setTimeout(botSendStartupMessage, 2000);
+      };
+      botWs.onclose = () => {
+        if (botPingTimer) { clearInterval(botPingTimer); botPingTimer = null; }
+        if (botSocialsTimer) { clearInterval(botSocialsTimer); botSocialsTimer = null; }
+        if (botPixelTimer) { clearInterval(botPixelTimer); botPixelTimer = null; }
+        setTimeout(connectBot, 5000);
+      };
+      botWs.onmessage = (e) => {
+        const data = e.data;
+        if (data.startsWith('PING')) { botSend('PONG :tmi.twitch.tv\r\n'); return; }
+        // El bot también lee el chat — esto es CLAVE para traducir al owner
+        // botWs (cuenta bot) sí los ve.
+        if (data.indexOf('PRIVMSG') === -1) return;
+        const parts = data.split('PRIVMSG #' + CHANNEL + ' :');
+        if (!parts[1]) return;
+        const msg = parts[1].trim();
+        const userMatch = data.match(/:(\w+)!/);
+        const user = userMatch ? userMatch[1].toLowerCase() : 'unknown';
+        // Ignorar mensajes del bot (solo si el bot es una cuenta separada del owner)
+        if (user === BOT_NICK.toLowerCase() && BOT_NICK.toLowerCase() !== BOT_OWNER.toLowerCase()) return;
+        // Si owner = bot, ignorar traducciones y mensajes automáticos del bot (evitar loop)
+        if (user === BOT_NICK.toLowerCase()) {
+          if (/\[.+\] \(\w+ > \w+\)$/.test(msg)) return; // traducción
+          if (/^[🤖🎨⚠️]/.test(msg)) return; // mensajes de sistema del bot
+          if (msg.startsWith('Mis redes') || msg.startsWith('Mi Instagram') || msg.startsWith('Mi canal') || msg.startsWith('Para pintar') || msg.startsWith('Discord:')) return; // respuestas a comandos
+        }
+        // Ping de bienvenida para usuarios nuevos (no para el owner ni el bot)
+        if (!botSeenUsers.has(user) && user !== BOT_OWNER.toLowerCase() && user !== BOT_NICK.toLowerCase()) {
+          console.log('[ping] 🔔 nuevo usuario (via bot):', user, '— reproduciendo ping.ogg');
+          botPlayPing();
+        }
+        botSeenUsers.add(user);
+        // Traducción (solo mensajes normales, no comandos)
+        if (msg.startsWith('!')) {
+          // Responder comandos del bot también desde acá
+          // (necesario porque la conexión principal no ve los mensajes del owner)
+          const botCmd = msg.split(' ')[0].toLowerCase();
+          const resp = BOT_COMMANDS[botCmd];
+          if (resp) botSendChat(resp);
+          return;
+        }
+        const isOwnerMsg = user === BOT_OWNER.toLowerCase();
+        console.log('[traductor-bot] 📨 mensaje de', user, '| isOwner:', isOwnerMsg, '| target:', isOwnerMsg ? 'EN' : 'ES', '| msg:', msg);
+        botTranslate(user, msg).then(translation => {
+          if (translation) {
+            console.log('[traductor-bot] ✅ traducido:', translation);
+            botSendChat(translation);
+          } else {
+            console.log('[traductor-bot] ⏭️ descartado (mismo idioma, muy corto, o error)');
+          }
+        });
+      };
+      botWs.onerror = (e) => {
+        console.error('Bot WS error', e);
+      };
+    }
+    const BOT_EMOTES = new Set([
+      'kappa','lul','pog','poggers','pogchamp','omegalul','monkas','sadge',
+      'pepega','kekw','hahaa','ez','jebaited','anele','biblethump',
+      'dansgame','elegiggle','failfish','feelsbadman','feelsgoodman','gachibass',
+      'gachigasm','hypers','komodohype','minglee','notlikethis','pastaport',
+      'residentsleeper','seemsgood','swiftrage','trihard','wutface','cmonbruh',
+      'kreygasm','pepelaugh','weirdchamp','heyguys','lulw','kappahd','kappapride',
+      '4head','babyrage','coolstorybob','forsene','kappaclaus','kappaross',
+      'kappaw','keepo','frankerz','issou','monkah','monkaw','smorc',
+    ]);
+    const BOT_COMMANDS = {
+      '!redes':     'Mis redes sociales: https://linktr.ee/' + CHANNEL,
+      '!linktree':  'Mis redes sociales: https://linktr.ee/' + CHANNEL,
+      '!instagram': 'Mi Instagram es: https://instagram.com/' + CHANNEL,
+      '!youtube':   'Mi canal de YouTube: https://youtube.com/' + CHANNEL,
+      '!pixel':     'Para pintar: https://' + CHANNEL + '.github.io/twitchpixel',
+      '!discord':   'Discord: https://discord.gg/h3PjHTKrZ8',
+    };
+    const BOT_SOCIALS_MS = 45 * 60 * 1000;
+    const BOT_PIXEL_MS  = 30 * 60 * 1000;
+    let botSeenUsers = new Set();
+    let botLastSocials = Date.now();
+    let botSocialsTimer = null;
+    let botPixelTimer = null;
+    let botPingTimer = null;
+
+    function botCleanText(text) {
+      text = text.replace(/[\u{1F300}-\u{1FFFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}]/gu, ' ');
+      return text.split(/\s+/).filter(w => !BOT_EMOTES.has(w.toLowerCase())).join(' ').trim();
+    }
+    function botRichEnough(text) {
+      if (!text || text.length < 3) return false;
+      if ((text.match(/[a-záéíóúüñA-ZÁÉÍÓÚÜÑ]/g)||[]).length < 2) return false;
+      // Permitir mensajes de una sola palabra si es suficientemente larga
+      return true;
+    }
+
+    function botPlayPing() {
+      try {
+        const a = document.getElementById('ping-audio');
+        if (a) {
+          a.volume = 1.0;
+          a.currentTime = 0;
+          a.play().catch(err => console.warn('[ping] autoplay blocked:', err.message));
+        }
+      } catch(e) { console.warn('[ping] error playing ping:', e); }
+    }
+
+    function botScheduleSocials() {
+      if (botSocialsTimer) clearInterval(botSocialsTimer);
+      botSocialsTimer = setInterval(() => {
+        botSendChat(BOT_COMMANDS['!redes']);
+      }, BOT_SOCIALS_MS);
+
+      if (botPixelTimer) clearInterval(botPixelTimer);
+      botPixelTimer = setInterval(() => {
+        botSendChat('🎨 ¡Pintá tu propio pixel art y aparecé en el stream! → https://' + CHANNEL + '.github.io/twitchpixel · Usá !dibujar [código] para mostrarlo');
+      }, BOT_PIXEL_MS);
+    }
+
+    function botSendStartupMessage() {
+      botSendChat('🤖 ' + BOT_NICK + ' operativo · traductor activo · !pixel · !redes · !discord');
+    }
+
+    // ── Primary WSS connection ─────────────────────────────────────
+    function connectTwitch() {
+      if (ws) { try{ws.close();}catch(e){} }
+
+      const useChannelAuth = CHANNEL_TOKEN !== '';
+      const useBotAuth     = FEAT_TRADUCTOR && BOT_TOKEN !== '';
+
+      ws = new WebSocket('wss://irc-ws.chat.twitch.tv:443');
+
+      ws.onopen = () => {
+        if (useChannelAuth) {
+          ws.send('CAP REQ :twitch.tv/tags twitch.tv/commands\r\n');
+          ws.send('PASS ' + CHANNEL_TOKEN + '\r\n');
+          ws.send('NICK ' + CHANNEL + '\r\n');
+        } else {
+          ws.send('CAP REQ :twitch.tv/tags twitch.tv/commands\r\n');
+          ws.send('PASS oauth:none\r\n');
+          ws.send('NICK justinfan' + Math.floor(Math.random()*99999) + '\r\n');
+        }
+        ws.send('JOIN #' + CHANNEL + '\r\n');
+      };
+
+      ws.onclose = () => {
+        setTimeout(connectTwitch, 3000);
+      };
+      ws.onerror = (e) => console.error('WS error', e);
+      ws.onmessage = (e) => handleMessage(e.data);
+    }
+
+    function handleMessage(data) {
+      if (data.startsWith('PING')) { ws.send('PONG :tmi.twitch.tv\r\n'); return; }
+      if (data.indexOf('PRIVMSG') === -1) return;
+
+      const parts = data.split('PRIVMSG #' + CHANNEL + ' :');
+      if (!parts[1]) return;
+      const msg      = parts[1].trim();
+      const rawTags  = data.split('PRIVMSG')[0];
+      const userMatch= data.match(/:(\w+)!/);
+      const user     = userMatch ? userMatch[1].toLowerCase() : 'unknown';
+      const isSub    = /subscriber=1/.test(rawTags) || /badges=[^;]*(?:subscriber|founder)/.test(rawTags);
+      const isAdmin  = (user === CHANNEL.toLowerCase());
+      const args     = msg.split(' ');
+      const cmd      = args[0].toLowerCase();
+
+      // ── Pixel art commands ──
+      if (FEAT_PIXEL) {
+        if (cmd === '!dibujar' && args[1]) { createDrawing(user, args[1], isSub); }
+        else if (cmd === '!test' && isAdmin) {
+          if (testMode) {
+            // Toggle OFF: remove only test drawings, keep real ones
+            if (isEventActive()) endEvent();
+            drawings = drawings.filter(d => {
+              if (d.isTest) { d.el.remove(); activeCodes.delete(d.code); return false; }
+              return true;
+            });
+            testMode = false;
+          } else {
+            // Toggle ON: create 25 test drawings
+            const testCode = 'v30000007E2553008751AB52361D2B535F574F83769CC2C3C7FFCCAAFF004D00E436FFEC2729ADFFFF77A8FFF1E8FFFFFF_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABgMDAwMCAQEABAQFBQUHBwYGAwMCAgIBAAQEBQUFBwcHCgoCAgkJCAgODg4ODQ0PDwICAgoJCQgIDg4ODg0NDw8CAQEBAQEBAQEBAQEBAQwMDAICAgYGEBABEBAQEAEMDAwLAQEBEBABAQEQAQEBAQEBAQEBARABAAwBEAEQARAQEAEQEAEQAQEMARABEAEQEAEBEAEBEBABDAEQARABEBAQARABEBAQAQABEAEBARABARABARAQEAEAAQEBAQEQEAEQEAEQEBABAAQEBAABAQEBAQEBAQEBAQ';
+            const names = ['PixelFan','NeonCat','StarDust','CoolBear','MoonFox','TurboRat','LaserOwl','CosmicDog','RetroApe','ZeroWolf','ChipBird','BitFrog','GlitchElk','HyperBat','WaveLion','RocketPig','QuantumYak','NovaDeer','MegaHawk','CyberRam','ArcadeEmu','SonicAnt','TechCow','VibeOrca','BlitzMoth'];
+            for (let i = 0; i < 25; i++) {
+              createDrawing(names[i], testCode + '~' + i, false);
+            }
+            // Mark test drawings and apply sub visual to every 5th
+            drawings.slice(-25).forEach((d, i) => { d.isTest = true; if (i % 5 === 0) d.el.classList.add('is-sub'); });
+            testMode = true;
+          }
+        }
+        else if (cmd === '!limpiar' && isAdmin) {
+          if (args[1]) removeAllDrawingsForUser(args[1].replace('@','').toLowerCase());
+          else removeAllDrawingsGlobal();
+        }
+      }
+
+      // ── Traductor: comandos y traducción se manejan desde botWs.onmessage ──
+      // porque esa conexión (bot) sí ve los mensajes del owner.
+      // handleMessage solo procesa pixel art commands.
+    }
+
+    // ==============================================================
+    //  EVENT SUBSCRIPTION (reward dispatcher)
+    // ==============================================================
+    const REWARD_MAP = {
+      'Haz Bailar tus Dibujos': (user) => {
+        queueReward('bailar', () => triggerUserDance(user), 8000);
+      },
+      'Borrar mi Dibujo': (user) => {
+        // Borrar is instant and never queued
+        removeLastDrawing(user);
+      },
+      'Velocidad': (user) => {
+        queueReward('velocidad', () => {
+          globalSpeedMultiplier = 1.8;
+        }, 60000, () => {
+          globalSpeedMultiplier = 0.54;
+        });
+      },
+      'Lluvia': (user) => {
+        queueReward('lluvia', () => {
+          rainMode = !rainMode;
+          drawings.forEach(d => {
+            if (rainMode) { d.rainOriginX = d.x; d.rainSpeed = 0.8 + Math.random() * 2; d.rainPhase = Math.random() * 7; }
+            else { d.y = LANES[d.lane]; }
+          });
+        }, 50000);
+      },
+      'Pelea':                  (user) => { queueOrRun('fight', triggerFight); },
+      'Boom':                   (user) => { queueOrRun('boom', triggerBoom); },
+      'Tornado':                (user) => { queueOrRun('tornado', triggerTornado); },
+      'Pogo':                   (user) => { queueOrRun('pogo', triggerPogo); },
+      'Volcan':                 (user) => { queueOrRun('volcano', triggerVolcano); },
+      'Salto':                  (user) => { queueOrRun('confetti', triggerConfetti); },
+      'Thriller':               (user) => { queueOrRun('thriller', triggerThriller); },
+      'Taiko':                  (user) => { queueOrRun('taiko', triggerTaiko); },
+      'Terremoto':              (user) => { queueOrRun('quake', triggerQuake); },
+      'Carrera':                (user) => { queueOrRun('race', triggerRace); },
+      'Espacio':                (user) => { queueOrRun('space', triggerSpace); },
+      'Remolino':               (user) => { queueOrRun('whirlpool', triggerWhirlpool); },
+      'Pachinko':               (user) => { queueOrRun('pachinko', triggerPachinko); },
+    };
+
+    let pubsubWs = null;
+    let pubsubPingInterval = null;
+    let eventsubSessionId = null;
+    let eventsubKeepaliveTimeout = 15; // seconds, updated from welcome message
+    let eventsubLastMessage = 0;
+
+    function connectPubSub() {
+      const token = PUBSUB_TOKEN.replace('oauth:', '');
+      if (!token || !CHANNEL_ID || !CLIENT_ID) {
+        console.warn('[eventsub] faltan parámetros: channel_token, channel_id, o client_id');
+        return;
+      }
+      if (pubsubWs) { try { pubsubWs.close(); } catch(e){} }
+
+      pubsubWs = new WebSocket('wss://eventsub.wss.twitch.tv/ws');
+
+      pubsubWs.onopen = () => {
+        console.log('[eventsub] ✅ WebSocket conectado, esperando welcome...');
+      };
+
+      pubsubWs.onmessage = async (e) => {
+        try {
+          const msg = JSON.parse(e.data);
+          const msgType = msg.metadata?.message_type;
+          eventsubLastMessage = Date.now();
+
+          if (msgType === 'session_welcome') {
+            // Welcome — tenemos 10s para suscribirnos
+            eventsubSessionId = msg.payload.session.id;
+            eventsubKeepaliveTimeout = (msg.payload.session.keepalive_timeout_seconds || 10) + 5;
+            console.log('[eventsub] 🎉 session_id:', eventsubSessionId);
+            
+            const ok = await eventsubSubscribe(
+              'channel.channel_points_custom_reward_redemption.add',
+              '1',
+              { broadcaster_user_id: CHANNEL_ID },
+              eventsubSessionId,
+              token
+            );
+            if (ok) console.log('[eventsub] ✅ suscripto a channel points');
+            else console.error('[eventsub] ❌ error al suscribirse');
+
+            // Iniciar monitor de keepalive
+            if (pubsubPingInterval) clearInterval(pubsubPingInterval);
+            pubsubPingInterval = setInterval(() => {
+              if (Date.now() - eventsubLastMessage > eventsubKeepaliveTimeout * 1000) {
+                console.warn('[eventsub] ⚠️ keepalive timeout, reconectando...');
+                try { pubsubWs.close(); } catch(e){}
+              }
+            }, 5000);
+          }
+          else if (msgType === 'session_keepalive') {
+          }
+          else if (msgType === 'session_reconnect') {
+            const newUrl = msg.payload.session.reconnect_url;
+            console.log('[eventsub] 🔄 reconnect a:', newUrl);
+            const oldWs = pubsubWs;
+            const oldOnMessage = oldWs.onmessage;
+            const oldOnClose = oldWs.onclose;
+            const oldOnError = oldWs.onerror;
+            pubsubWs = new WebSocket(newUrl);
+            pubsubWs.onmessage = oldOnMessage;
+            pubsubWs.onerror = oldOnError;
+            pubsubWs.onclose = oldOnClose;
+          }
+          else if (msgType === 'notification') {
+            const event = msg.payload.event;
+            const subType = msg.payload.subscription?.type;
+            
+            if (subType === 'channel.channel_points_custom_reward_redemption.add') {
+              const rewardTitle = event.reward?.title;
+              const redeemUser = (event.user_name || event.user_login || 'unknown').toLowerCase();
+              
+              console.log('[eventsub] 🎯 redemption:', rewardTitle, 'por', redeemUser);
+              
+              const handler = REWARD_MAP[rewardTitle];
+              if (handler) {
+                handler(redeemUser);
+              } else {
+                console.log('[eventsub] recompensa sin handler:', rewardTitle);
+              }
+            }
+          }
+          else if (msgType === 'revocation') {
+            console.warn('[eventsub] ⚠️ suscripción revocada:', msg.payload.subscription?.type, '—', msg.payload.subscription?.status);
+          }
+        } catch(err) {
+          console.error('[eventsub] error procesando mensaje:', err);
+        }
+      };
+
+      pubsubWs.onclose = () => {
+        console.log('[eventsub] 🔌 conexión cerrada, reconectando en 5s...');
+        if (pubsubPingInterval) { clearInterval(pubsubPingInterval); pubsubPingInterval = null; }
+        eventsubSessionId = null;
+        setTimeout(connectPubSub, 5000);
+      };
+
+      pubsubWs.onerror = (e) => {
+        console.error('[eventsub] error:', e);
+      };
+    }
+
+    async function eventsubSubscribe(type, version, condition, sessionId, token) {
+      try {
+        const res = await fetch('https://api.twitch.tv/helix/eventsub/subscriptions', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + token,
+            'Client-Id': CLIENT_ID,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            type: type,
+            version: version,
+            condition: condition,
+            transport: {
+              method: 'websocket',
+              session_id: sessionId
+            }
+          })
+        });
+        
+        if (res.status === 202) return true;
+        
+        const data = await res.json();
+        console.error('[eventsub] subscribe error:', res.status, data);
+        
+        // 409 = ya existe la suscripción, está OK
+        if (res.status === 409) return true;
+        
+        return false;
+      } catch(e) {
+        console.error('[eventsub] subscribe fetch error:', e);
+        return false;
+      }
+    }
+
+    // === BORRADO ===
+    function removeLastDrawing(u) {
+      for (let i=drawings.length-1;i>=0;i--) { if(drawings[i].user===u){drawings[i].el.remove();activeCodes.delete(drawings[i].code);drawings.splice(i,1);return;} }
+    }
+    function removeAllDrawingsForUser(u) {
+      drawings=drawings.filter(d=>{if(d.user===u){d.el.remove();activeCodes.delete(d.code);return false;}return true;});
+    }
+    function removeAllDrawingsGlobal() {
+      drawings.forEach(d=>d.el.remove()); drawings=[];activeCodes.clear();subQueue=[];isShowcaseBusy=false;
+      // If an event is running, cancel it since there's nothing left
+      if (isEventActive()) {
+        if (eventTimer) { clearTimeout(eventTimer); eventTimer = null; }
+        activeEvent = null; fightState = null;
+        document.getElementById('fight-hud').style.display = 'none';
+      }
+    }
+
+    // === USER DANCE (reward trigger) ===
+    function triggerUserDance(targetUser) {
+      const userDrawings = drawings.filter(d => d.user === targetUser);
+      if (userDrawings.length === 0) return;
+      userDrawings.forEach(d => {
+        if (d.el.classList.contains('user-dancing')) return;
+        d.el.classList.add('user-dancing');
+        setTimeout(() => { d.el.classList.remove('user-dancing'); }, 8000);
+      });
+    }
+
+    // === CREAR DIBUJO ===
+    function createDrawing(user, fullCode, isSub, forceX) {
+      if (fullCode) fullCode = fullCode.replace(/=+$/,'');
+      if (activeCodes.has(fullCode)) return;
+      const drawCode = fullCode.replace(/~\d+$/, ''); // strip test suffix for decoding
+      try {
+        let pixelData=[], finalPalette=[];
+        const isV3 = drawCode.indexOf('v3')===0;
+        const isV2 = !isV3 && drawCode.indexOf('v2')===0;
+        if (!isV2 && !isV3) return; // solo v2 y v3 soportados
+        const c=drawCode.substring(2); const [h,p]=c.split('_');
+        if(!h||!p) return; finalPalette.push('transparent');
+        for(let i=0;i<h.length;i+=6) finalPalette.push('#'+h.substring(i,i+6));
+        const b=atob(p);
+        if (isV3) {
+          for(let i=0;i<b.length;i++) pixelData.push(b.charCodeAt(i));
+        } else {
+          for(let i=0;i<b.length;i++){const v=b.charCodeAt(i);pixelData.push((v>>4)&0x0F,v&0x0F);}
+        }
+        if(!pixelData.length||!finalPalette.length) return;
+
+        const itemEl=document.createElement('div'); itemEl.className='item';
+        const canvas=document.createElement('canvas'); canvas.className='pixel-art'; canvas.width=16;canvas.height=16;
+        const ctx=canvas.getContext('2d');
+        pixelData.forEach((idx,k)=>{if(finalPalette[idx]&&finalPalette[idx]!=='transparent'){ctx.fillStyle=finalPalette[idx];ctx.fillRect(k%16,Math.floor(k/16),1,1);}});
+
+        if(isSub){itemEl.classList.add('is-sub');itemEl.classList.add('waiting');}
+        if(!isSub) itemEl.classList.add('jumping');
+        itemEl.appendChild(canvas);
+        const nickEl=document.createElement('div');nickEl.className='nick';nickEl.innerText=(isSub?'⭐ ':'')+user;
+        itemEl.appendChild(nickEl);
+
+        const laneIdx=drawings.length%4;
+        itemEl.style.zIndex=Z_INDEXES[laneIdx];
+        document.getElementById('container').appendChild(itemEl);
+
+        let obj={el:itemEl,user,code:fullCode,lane:laneIdx,speed:SPEEDS[laneIdx],y:LANES[laneIdx],x:forceX||-400,dying:false,vy:0,rot:0,rainOriginX:0,rainSpeed:1,rainPhase:0,loops:0,boomVx:0,boomVy:0,boomRot:0,boomRotSpeed:0,fightSide:null,fightSlotX:0,fightSlotY:0,fightPhase:Math.random()*7,fightDead:false,tornadoAngle:0,tornadoRadius:0,tornadoStart:0,thrillerDir:1,thrillerY:400,taikoSlotX:0,taikoSlotY:450,raceSpeed:0,raceMult:1,raceFinished:false,gravFlip:false,whirlAngle:0,whirlRadius:0,whirlVr:0};
+        if(forceX===undefined) obj.x=Math.min(-200, getMinXInLane(laneIdx,null)-350);
+        obj.rainOriginX=obj.x;
+        drawings.push(obj);
+        activeCodes.add(fullCode);
+        
+        // If an event is active, ALL drawings (including subs) join directly
+        if (isEventActive()) {
+          joinActiveEvent(obj);
+        }
+        
+        // Subs only go to showcase if no event is active
+        if(isSub && !isEventActive()){subQueue.push(obj);processQueue();}
+      } catch(e){console.error(e);}
+    }
+
+    // === SHOWCASE + ESPIRAL ===
+    function processQueue() {
+      if (!isShowcaseBusy && subQueue.length > 0) {
+        isShowcaseBusy = true;
+        const cur = subQueue.shift();
+        cur.el.classList.remove('waiting','hidden');
+        cur.el.classList.add('showcase');
+        showcaseTimer = setTimeout(() => {
+          cur.el.classList.remove('showcase');
+          // If any event is active, join it directly
+          if (isEventActive()) {
+            cur.el.style.transform='';
+            cur.x=960; cur.y=540;
+            joinActiveEvent(cur);
+            isShowcaseBusy=false; processQueue(); return;
+          }
+          // Normal spiral
+          cur.el.classList.add('spiral-to-lane');
+          const tX=50, tY=LANES[cur.lane], sX=960, sY=540, sS=4.1, eS=1, spins=4, dur=1400;
+          const st=performance.now();
+          function step(now){
+            const p=Math.min((now-st)/dur,1), e=1-Math.pow(1-p,3);
+            cur.el.style.transform=`translate3d(${sX+(tX-sX)*e}px,${sY+(tY-sY)*e}px,0) scale(${sS+(eS-sS)*e}) rotate(${spins*360*p}deg)`;
+            if(p<1){requestAnimationFrame(step);}
+            else{
+              cur.el.classList.remove('spiral-to-lane');cur.el.style.transform='';
+              cur.x=tX;cur.y=tY;
+              if(isEventActive()){
+                joinActiveEvent(cur);
+              } else { cur.el.classList.add('jumping'); cur.loops=0; }
+              isShowcaseBusy=false; processQueue();
+            }
+          }
+          requestAnimationFrame(step);
+        }, 10000);
+      }
+    }
+
+    // ==============================================================
+    //  EVENTS
+    // ==============================================================
+// Force all subs out of showcase/queue and into the event
+    function forceAllSubsToEvent() {
+      // 1. Frenamos el timer del baile actual
+      if (isShowcaseBusy && showcaseTimer) {
+        clearTimeout(showcaseTimer);
+        showcaseTimer = null;
+        isShowcaseBusy = false;
+      }
+      // 2. A todos los subs que estaban bailando, esperando o volando, los limpiamos
+      drawings.forEach(d => {
+        if (d.el.classList.contains('showcase')) {
+           d.el.classList.remove('showcase');
+           d.el.style.transform = '';
+        }
+        if (d.el.classList.contains('waiting')) d.el.classList.remove('waiting', 'hidden');
+        if (d.el.classList.contains('spiral-to-lane')) {
+           d.el.classList.remove('spiral-to-lane');
+           d.el.style.transform = '';
+        }
+      });
+      // 3. Vaciamos la cola de subs (ya van a entrar todos a pelear/volar)
+      subQueue = [];
+    }
+    
+    // --- BOOM ---
+    function triggerBoom() {
+      if (activeEvent === 'boom') { endEvent(); return; }
+      if (isEventActive()) endEvent();
+      if (drawings.length < 2) { return; }
+      activeEvent = 'boom'; rainMode = false;
+      forceAllSubsToEvent();
+      drawings.forEach(d => {
+        d.el.classList.remove('jumping');
+        assignBoomPhysics(d);
+      });
+      eventTimer = setTimeout(endEvent, 30000);
+    }
+
+    // --- POGO ---
+    function triggerPogo() {
+      if (activeEvent === 'pogo') { endEvent(); return; }
+      if (isEventActive()) endEvent();
+      if (drawings.length < 2) { return; }
+      activeEvent = 'pogo'; rainMode = false;
+      forceAllSubsToEvent();
+      drawings.forEach(d => {
+        d.el.classList.remove('jumping');
+        d.boomVx = (Math.random()-0.5) * 8;
+        d.boomVy = -(14 + Math.random()*10); // big initial launch upward
+        d.boomRot = 0;
+        d.boomRotSpeed = (Math.random()-0.5)*10;
+      });
+      eventTimer = setTimeout(endEvent, 30000);
+    }
+
+    // --- VOLCANO ---
+    function triggerVolcano() {
+      if (activeEvent === 'volcano') { endEvent(); return; }
+      if (isEventActive()) endEvent();
+      if (drawings.length < 2) { return; }
+      activeEvent = 'volcano'; rainMode = false;
+      forceAllSubsToEvent();
+      drawings.forEach(d => {
+        d.el.classList.remove('jumping');
+        // Start all at the volcano mouth (bottom center)
+        d.x = 880 + (Math.random() - 0.5) * 160;
+        d.y = 1080;
+        d.boomVy = -(18 + Math.random() * 16); // massive upward blast, staggered
+        d.boomVx = (Math.random() - 0.5) * 12; // fan out horizontally
+        d.boomRot = 0;
+        d.boomRotSpeed = (Math.random() - 0.5) * 10;
+        d.fightPhase = Math.random() * 7; // for wind drift variation
+      });
+      eventTimer = setTimeout(endEvent, 30000);
+    }
+
+    // --- CONFETTI (Salto) ---
+    function triggerConfetti() {
+      if (activeEvent === 'confetti') { endEvent(); return; }
+      if (isEventActive()) endEvent();
+      if (drawings.length < 2) { return; }
+      activeEvent = 'confetti'; rainMode = false;
+      forceAllSubsToEvent();
+      drawings.forEach(d => {
+        d.el.classList.remove('jumping');
+        // Spread across the full width, start from bottom
+        d.x = Math.random() * 1800;
+        d.y = 950;
+        d.boomVy = -(12 + Math.random() * 18); // strong upward launch
+        d.boomVx = (Math.random() - 0.5) * 10;
+        d.boomRot = 0;
+        d.boomRotSpeed = (Math.random() - 0.5) * 14; // lots of spin
+        d.fightPhase = Math.random() * 7;
+      });
+      eventTimer = setTimeout(endEvent, 30000);
+    }
+
+    // --- TORNADO ---
+    function triggerTornado() {
+      if (activeEvent === 'tornado') { endEvent(); return; }
+      if (isEventActive()) endEvent();
+      if (drawings.length < 2) { return; }
+      activeEvent = 'tornado'; rainMode = false;
+      forceAllSubsToEvent();
+      const startTime = Date.now();
+      drawings.forEach((d, i) => {
+        d.el.classList.remove('jumping');
+        // Each drawing starts at a different angle, spread around the circle
+        d.tornadoAngle = (Math.PI * 2 / drawings.length) * i;
+        d.tornadoRadius = 300 + Math.random() * 400; // start spread out
+        d.tornadoStart = startTime;
+        d.boomRot = 0;
+        d.fightPhase = Math.random() * 7;
+      });
+      eventTimer = setTimeout(endEvent, 30000);
+    }
+
+    // --- THRILLER ---
+    function triggerThriller() {
+      if (activeEvent === 'thriller') { endEvent(); return; }
+      if (isEventActive()) endEvent();
+      if (drawings.length < 2) { return; }
+      activeEvent = 'thriller'; rainMode = false;
+      forceAllSubsToEvent();
+      const startTime = Date.now();
+      drawings.forEach((d, i) => {
+        d.el.classList.remove('jumping');
+        d.tornadoStart = startTime;
+        d.fightPhase = Math.random() * 7;
+        d.thrillerDir = (Math.random() > 0.5) ? 1 : -1; // some go left, some right
+        d.thrillerY = 200 + Math.random() * 600; // spread across screen height
+        d.x = Math.random() * 1800;
+      });
+      eventTimer = setTimeout(endEvent, 30000);
+    }
+
+    // --- TAIKO ---
+    function calcTaikoSlots(count) {
+      // Multi-row grid: max ~10 per row, rows spaced vertically
+      const maxPerRow = Math.min(10, count);
+      const rows = Math.ceil(count / maxPerRow);
+      const rowHeight = 220; // vertical spacing between rows
+      const totalHeight = (rows - 1) * rowHeight;
+      const baseY = 500 - totalHeight / 2; // center vertically on screen
+      const slots = [];
+      for (let i = 0; i < count; i++) {
+        const row = Math.floor(i / maxPerRow);
+        const inRow = (row === rows - 1) ? count - row * maxPerRow : maxPerRow; // items in this row
+        const col = i % maxPerRow;
+        const spacing = Math.min(190, 1700 / inRow);
+        const rowStartX = 960 - (inRow - 1) * spacing / 2;
+        slots.push({ x: rowStartX + col * spacing, y: baseY + row * rowHeight });
+      }
+      return slots;
+    }
+
+    function triggerTaiko() {
+      if (activeEvent === 'taiko') { endEvent(); return; }
+      if (isEventActive()) endEvent();
+      if (drawings.length < 2) { return; }
+      activeEvent = 'taiko'; rainMode = false;
+      forceAllSubsToEvent();
+      const startTime = Date.now();
+      const slots = calcTaikoSlots(drawings.length);
+      drawings.forEach((d, i) => {
+        d.el.classList.remove('jumping');
+        d.tornadoStart = startTime;
+        d.taikoSlotX = slots[i].x;
+        d.taikoSlotY = slots[i].y;
+        d.x = d.taikoSlotX;
+      });
+      eventTimer = setTimeout(endEvent, 30000);
+    }
+
+    // --- EARTHQUAKE (Terremoto) ---
+    function triggerQuake() {
+      if (activeEvent === 'quake') { endEvent(); return; }
+      if (isEventActive()) endEvent();
+      if (drawings.length < 2) { return; }
+      activeEvent = 'quake'; rainMode = false;
+      forceAllSubsToEvent();
+      const startTime = Date.now();
+      document.getElementById('container').classList.add('screen-shake');
+      drawings.forEach(d => {
+        d.el.classList.remove('jumping');
+        d.tornadoStart = startTime;
+        d.boomVy = -(10 + Math.random() * 16); // strong initial launch
+        d.boomVx = (Math.random() - 0.5) * 14;
+        d.boomRot = 0;
+        d.boomRotSpeed = (Math.random() - 0.5) * 12;
+      });
+      // Screen shake for 15 seconds then settles
+      setTimeout(() => { document.getElementById('container').classList.remove('screen-shake'); }, 15000);
+      eventTimer = setTimeout(endEvent, 30000);
+    }
+
+    // --- RACE (Carrera) ---
+    function triggerRace() {
+      if (activeEvent === 'race') { endEvent(); return; }
+      if (isEventActive()) endEvent();
+      if (drawings.length < 2) { return; }
+      activeEvent = 'race'; rainMode = false;
+      forceAllSubsToEvent();
+      const count = drawings.length;
+      const rowSpacing = Math.min(80, 850 / count);
+      const startY = 500 - (count - 1) * rowSpacing / 2;
+      drawings.forEach((d, i) => {
+        d.el.classList.remove('jumping');
+        d.x = -120 - Math.random() * 80;
+        d.y = startY + i * rowSpacing;
+        d.raceSpeed = 0.1 + Math.random() * 0.2;
+        d.raceMult = 0.4 + Math.random() * 1.2; // 0.4 to 1.6 — huge spread between fast and slow
+        d.raceFinished = false;
+        d.fightPhase = Math.random() * 7;
+      });
+      document.getElementById('race-winner').classList.remove('show');
+      eventTimer = setTimeout(endEvent, 40000);
+    }
+
+    // --- ESPACIO (Space / Moon gravity) ---
+    function triggerSpace() {
+      if (activeEvent === 'space') { endEvent(); return; }
+      if (isEventActive()) endEvent();
+      if (drawings.length < 2) { return; }
+      activeEvent = 'space'; rainMode = false;
+      forceAllSubsToEvent();
+      drawings.forEach(d => {
+        d.el.classList.remove('jumping');
+        // Slower than boom — floaty drift in all directions
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 1.5 + Math.random() * 2.5;
+        d.boomVx = Math.cos(angle) * speed;
+        d.boomVy = Math.sin(angle) * speed;
+        d.boomRot = 0;
+        d.boomRotSpeed = (Math.random() - 0.5) * 4;
+      });
+      eventTimer = setTimeout(endEvent, 30000);
+    }
+
+    // --- REMOLINO (Whirlpool / Vortex) ---
+    function triggerWhirlpool() {
+      if (activeEvent === 'whirlpool') { endEvent(); return; }
+      if (isEventActive()) endEvent();
+      if (drawings.length < 2) { return; }
+      activeEvent = 'whirlpool'; rainMode = false;
+      forceAllSubsToEvent();
+      const startTime = Date.now();
+      drawings.forEach((d, i) => {
+        d.el.classList.remove('jumping');
+        d.tornadoStart = startTime;
+        d.whirlAngle = (Math.PI * 2 / drawings.length) * i;
+        d.whirlRadius = 200 + Math.random() * 500;
+        d.whirlVr = 0; // radial velocity (positive = outward)
+        d.boomRot = 0;
+        d.fightPhase = Math.random() * 7;
+      });
+      eventTimer = setTimeout(endEvent, 30000);
+    }
+
+    // ==============================================================
+    //  PACHINKO GAME ENGINE
+    // ==============================================================
+    let pachinkoState = null;
+
+    // Board config — all positions RELATIVE to the board (which starts at x=500 in the screen)
+    const PACH = {
+      boardX: 500,       // board left edge in screen coords
+      boardW: 1420,
+      boardH: 1080,
+      ballSize: 22,      // smaller pixel art balls (~35% reduction: 165 * 0.65 ≈ 107 for display, but physics uses 22)
+      ballDisplay: 107,  // visual size of the ball (165 * 0.65)
+      gravity: 0.11,     // lighter gravity — balls float and bounce more (Peggle-like)
+      bounce: 0.55,
+      friction: 0.988,   // less friction so balls keep lateral momentum
+      pegRadius: 9,      // slightly bigger pegs for easier bouncing
+      pegBounce: 0.85,   // bouncier pegs — more elastic (Peggle feel)
+      ballsPerDrawing: 6, // total balls per USER (distributed across their drawings)
+    };
+
+    // Hole definitions: type, points, width, color class
+    // Layout: from left to right across the board width
+    function getPachinkoHoles() {
+      // 9 holes — wider and easier to read
+      // Pattern: zero, good, bad, small, JACKPOT, small, bad, good, zero
+      const holes = [
+        { type: 'zero',    pts: 0,     cls: 'hole-zero',    label: '0' },
+        { type: 'good',    pts: 200,   cls: 'hole-good',    label: '+200' },
+        { type: 'bad',     pts: -500,  cls: 'hole-bad',     label: '-500 ☠️' },
+        { type: 'small',   pts: 75,    cls: 'hole-small',   label: '+75' },
+        { type: 'jackpot', pts: 1000,  cls: 'hole-jackpot', label: '🎰 x1000' },
+        { type: 'small',   pts: 75,    cls: 'hole-small',   label: '+75' },
+        { type: 'bad',     pts: -500,  cls: 'hole-bad',     label: '-500 ☠️' },
+        { type: 'good',    pts: 200,   cls: 'hole-good',    label: '+200' },
+        { type: 'zero',    pts: 0,     cls: 'hole-zero',    label: '0' },
+      ];
+      const totalHoles = holes.length;
+      const totalWidth = PACH.boardW - 20; // 10px margin each side
+      // bad = 80px, jackpot = 90px, others fill remaining space
+      const badCount = holes.filter(h => h.type === 'bad').length;
+      const jackpotCount = holes.filter(h => h.type === 'jackpot').length;
+      const fixedWidth = badCount * 80 + jackpotCount * 90;
+      const remainingWidth = totalWidth - fixedWidth;
+      const normalCount = totalHoles - badCount - jackpotCount;
+      const normalWidth = Math.floor(remainingWidth / normalCount);
+      
+      let x = 10;
+      return holes.map(h => {
+        let w;
+        if (h.type === 'bad') w = 80;
+        else if (h.type === 'jackpot') w = 90;
+        else w = normalWidth;
+        const hole = { ...h, x, w };
+        x += w;
+        return hole;
+      });
+    }
+
+    function generatePegs() {
+      const pegs = [];
+      const cols = 13;     // fewer columns (was 18) — more horizontal space
+      const rows = 10;     // fewer rows (was 14) — more vertical space between bounces
+      const startY = 90;
+      const endY = PACH.boardH - 130;
+      const rowSpacing = (endY - startY) / rows;
+      const colSpacing = PACH.boardW / (cols + 1);
+      
+      for (let r = 0; r < rows; r++) {
+        const offset = (r % 2 === 0) ? 0 : colSpacing / 2;
+        const numCols = (r % 2 === 0) ? cols : cols - 1;
+        for (let c = 0; c < numCols; c++) {
+          const px = offset + (c + 1) * colSpacing;
+          const py = startY + r * rowSpacing;
+          // Add slight randomness for natural look
+          const jitterX = (Math.random() - 0.5) * 10;
+          const jitterY = (Math.random() - 0.5) * 6;
+          pegs.push({ x: px + jitterX, y: py + jitterY });
+        }
+      }
+      return pegs;
+    }
+
+    function buildPachinkoBoard() {
+      const board = document.getElementById('pachinko-board');
+      board.innerHTML = '';
+      
+      // Generate and render pegs
+      const pegs = generatePegs();
+      pegs.forEach(p => {
+        const el = document.createElement('div');
+        el.className = 'pachinko-peg';
+        el.style.left = (p.x - PACH.pegRadius) + 'px';
+        el.style.top = (p.y - PACH.pegRadius) + 'px';
+        board.appendChild(el);
+      });
+      
+      // Generate and render holes
+      const holes = getPachinkoHoles();
+      holes.forEach((h, i) => {
+        const el = document.createElement('div');
+        el.className = 'pachinko-hole ' + h.cls;
+        el.style.left = h.x + 'px';
+        el.style.width = h.w + 'px';
+        el.innerHTML = '<div class="hole-label">' + h.label + '</div>';
+        el.id = 'pach-hole-' + i;
+        board.appendChild(el);
+        
+        // Add small divider walls between holes
+        if (i < holes.length - 1) {
+          const wall = document.createElement('div');
+          wall.className = 'pachinko-wall';
+          wall.style.left = (h.x + h.w - 2) + 'px';
+          wall.style.height = '85px';
+          board.appendChild(wall);
+        }
+      });
+      
+      return { pegs, holes };
+    }
+
+    function createPachinkoBall(drawing, ballIndex) {
+      const board = document.getElementById('pachinko-board');
+      // Create a mini version of the drawing's canvas
+      const container = document.createElement('div');
+      container.style.cssText = `position:absolute;width:${PACH.ballDisplay}px;height:${PACH.ballDisplay}px;pointer-events:none;z-index:50;will-change:transform;`;
+      
+      // Clone the canvas at smaller size
+      const origCanvas = drawing.el.querySelector('canvas');
+      const miniCanvas = document.createElement('canvas');
+      miniCanvas.width = 16; miniCanvas.height = 16;
+      miniCanvas.style.cssText = `width:${PACH.ballDisplay}px;height:${PACH.ballDisplay}px;image-rendering:pixelated;`;
+      const ctx = miniCanvas.getContext('2d');
+      ctx.drawImage(origCanvas, 0, 0);
+      container.appendChild(miniCanvas);
+      
+      // Nick label under ball
+      const nick = document.createElement('div');
+      nick.style.cssText = 'color:#fff;font-size:11px;font-weight:700;text-align:center;text-shadow:1px 1px 0 #000;white-space:nowrap;margin-top:-2px;width:120px;margin-left:' + ((PACH.ballDisplay - 120)/2) + 'px;overflow:hidden;text-overflow:ellipsis;';
+      nick.textContent = drawing.user;
+      container.appendChild(nick);
+      
+      board.appendChild(container);
+      
+      // Random drop position across the top, with some spread
+      const dropX = 100 + Math.random() * (PACH.boardW - 200);
+      
+      return {
+        el: container,
+        user: drawing.user,
+        x: dropX,
+        y: -20 - ballIndex * 5,
+        vx: (Math.random() - 0.5) * 2,
+        vy: 0.5 + Math.random() * 0.5,
+        rot: 0,
+        rotSpeed: (Math.random() - 0.5) * 6,
+        radius: PACH.ballSize,
+        alive: true,
+        scored: false,
+      };
+    }
+
+    function triggerPachinko() {
+      if (activeEvent === 'pachinko') { endEvent(); return; }
+      if (isEventActive()) endEvent();
+      if (drawings.length < 2) return;
+      
+      activeEvent = 'pachinko';
+      rainMode = false;
+      forceAllSubsToEvent();
+      
+      // Hide normal drawings
+      drawings.forEach(d => { d.el.style.opacity = 0; });
+      
+      // Build the board
+      const { pegs, holes } = buildPachinkoBoard();
+      
+      // Show HUD
+      document.getElementById('pachinko-hud').style.display = 'block';
+      document.getElementById('pachinko-timer-fill').style.width = '100%';
+      
+      // Group drawings by user
+      const userDrawings = {};
+      drawings.forEach(d => {
+        if (!userDrawings[d.user]) userDrawings[d.user] = [];
+        userDrawings[d.user].push(d);
+      });
+      
+      // --- Balance: each USER gets the same total balls regardless of drawing count ---
+      // All drawings participate visually, balls distributed evenly across them
+      const BALLS_PER_USER = PACH.ballsPerDrawing; // 6 balls per user, always
+      
+      // Create ball queue: distribute BALLS_PER_USER evenly across each user's drawings
+      const ballQueue = [];
+      for (const [user, uDrawings] of Object.entries(userDrawings)) {
+        const count = uDrawings.length;
+        const base = Math.floor(BALLS_PER_USER / count);
+        const remainder = BALLS_PER_USER % count;
+        // Shuffle so the "extra" balls go to random drawings each time
+        const shuffledDrawings = uDrawings.sort(() => Math.random() - 0.5);
+        shuffledDrawings.forEach((d, idx) => {
+          // First 'remainder' drawings get one extra ball
+          const balls = base + (idx < remainder ? 1 : 0);
+          for (let b = 0; b < balls; b++) {
+            ballQueue.push(d);
+          }
+        });
+      }
+      // Shuffle the ball queue so users are interleaved
+      for (let i = ballQueue.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [ballQueue[i], ballQueue[j]] = [ballQueue[j], ballQueue[i]];
+      }
+      
+      // Initialize scores — each user always gets BALLS_PER_USER total
+      const scores = {};
+      for (const user of Object.keys(userDrawings)) {
+        scores[user] = { pts: 0, total: BALLS_PER_USER, remaining: BALLS_PER_USER };
+      }
+      
+      pachinkoState = {
+        pegs,
+        holes,
+        balls: [],
+        ballQueue,
+        ballQueueIdx: 0,
+        scores,
+        totalBalls: ballQueue.length,
+        scoredBalls: 0,        // track how many balls have landed in holes
+        startTime: Date.now(),
+        lastDropTime: 0,
+        dropInterval: 1500,    // fixed 1.5s between drops — nice visual rhythm
+        phase: 'dropping',     // 'dropping' | 'settling' | 'finished'
+      };
+      
+      updatePachinkoScores();
+      
+      // Progress bar: updates based on balls remaining, not time
+      const progressInterval = setInterval(() => {
+        if (!pachinkoState || activeEvent !== 'pachinko') { clearInterval(progressInterval); return; }
+        const pct = Math.max(0, 1 - pachinkoState.scoredBalls / pachinkoState.totalBalls);
+        document.getElementById('pachinko-timer-fill').style.width = (pct * 100) + '%';
+      }, 200);
+    }
+
+    function pachinkoTick(dt, now) {
+      if (!pachinkoState) return;
+      const st = pachinkoState;
+      
+      // Drop new balls
+      if (st.phase === 'dropping' && st.ballQueueIdx < st.ballQueue.length) {
+        if (now - st.lastDropTime > st.dropInterval) {
+          const drawing = st.ballQueue[st.ballQueueIdx];
+          const ball = createPachinkoBall(drawing, st.ballQueueIdx);
+          st.balls.push(ball);
+          st.lastDropTime = now;
+          st.ballQueueIdx++;
+          
+          // Switch to settling when all balls dropped
+          if (st.ballQueueIdx >= st.ballQueue.length) {
+            st.phase = 'settling';
+            // Safety: if balls get stuck, force end after 15s
+            st.settleTimeout = setTimeout(() => {
+              if (pachinkoState && pachinkoState.phase !== 'finished') {
+                pachinkoState.phase = 'finished';
+                showPachinkoWinner();
+              }
+            }, 15000);
+          }
+        }
+      }
+      
+      // Physics for all active balls
+      for (let i = st.balls.length - 1; i >= 0; i--) {
+        const b = st.balls[i];
+        if (!b.alive) continue;
+        
+        // Gravity
+        b.vy += PACH.gravity * dt;
+        
+        // Apply velocity
+        b.x += b.vx * dt;
+        b.y += b.vy * dt;
+        
+        // Friction
+        b.vx *= PACH.friction;
+        
+        // Rotation
+        b.rot += b.rotSpeed * dt;
+        b.rotSpeed *= 0.998;
+        
+        // Wall bounces (left and right of board)
+        if (b.x < b.radius) { b.x = b.radius; b.vx = Math.abs(b.vx) * PACH.bounce; b.rotSpeed += 2; }
+        if (b.x > PACH.boardW - b.radius) { b.x = PACH.boardW - b.radius; b.vx = -Math.abs(b.vx) * PACH.bounce; b.rotSpeed -= 2; }
+        
+        // Top bounce
+        if (b.y < b.radius) { b.y = b.radius; b.vy = Math.abs(b.vy) * 0.3; }
+        
+        // Peg collisions
+        for (const peg of st.pegs) {
+          const dx = b.x - peg.x;
+          const dy = b.y - peg.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          const minDist = b.radius + PACH.pegRadius;
+          if (dist < minDist && dist > 0) {
+            // Push ball out
+            const nx = dx / dist;
+            const ny = dy / dist;
+            b.x = peg.x + nx * minDist;
+            b.y = peg.y + ny * minDist;
+            
+            // Reflect velocity
+            const dot = b.vx * nx + b.vy * ny;
+            b.vx -= 2 * dot * nx * PACH.pegBounce;
+            b.vy -= 2 * dot * ny * PACH.pegBounce;
+            
+            // Peggle-style: strong lateral scatter + slight upward pop
+            b.vx += (Math.random() - 0.5) * 2.5;
+            b.vy += (Math.random() - 0.5) * 1.2 - 0.3; // bias upward slightly
+            
+            b.rotSpeed = (Math.random() - 0.5) * 12;
+          }
+        }
+        
+        // Ball-to-ball collisions (lighter)
+        for (let j = i - 1; j >= 0; j--) {
+          const o = st.balls[j];
+          if (!o.alive) continue;
+          const dx = b.x - o.x;
+          const dy = b.y - o.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          const minDist = b.radius * 2;
+          if (dist < minDist && dist > 0) {
+            const nx = dx / dist;
+            const ny = dy / dist;
+            const overlap = (minDist - dist) / 2;
+            b.x += nx * overlap;
+            b.y += ny * overlap;
+            o.x -= nx * overlap;
+            o.y -= ny * overlap;
+            const dvx = b.vx - o.vx;
+            const dvy = b.vy - o.vy;
+            const dot = dvx * nx + dvy * ny;
+            if (dot > 0) {
+              b.vx -= dot * nx * 0.4;
+              b.vy -= dot * ny * 0.4;
+              o.vx += dot * nx * 0.4;
+              o.vy += dot * ny * 0.4;
+            }
+          }
+        }
+        
+        // Divider wall collisions
+        st.holes.forEach((h, idx) => {
+          if (idx < st.holes.length - 1) {
+            const wallX = h.x + h.w - 2;
+            const wallTop = PACH.boardH - 85 - 70;
+            const wallBottom = PACH.boardH - 70;
+            if (b.y > wallTop && b.y < wallBottom) {
+              if (Math.abs(b.x - wallX) < b.radius + 2) {
+                if (b.x < wallX) { b.x = wallX - b.radius - 2; b.vx = -Math.abs(b.vx) * 0.5; }
+                else { b.x = wallX + b.radius + 2; b.vx = Math.abs(b.vx) * 0.5; }
+              }
+            }
+          }
+        });
+        
+        // Check if ball entered a hole (bottom of board)
+        if (b.y > PACH.boardH - 80 && !b.scored) {
+          // Find which hole
+          for (let hi = 0; hi < st.holes.length; hi++) {
+            const h = st.holes[hi];
+            if (b.x >= h.x && b.x < h.x + h.w) {
+              b.scored = true;
+              b.alive = false;
+              
+              // Score it
+              st.scores[b.user].pts += h.pts;
+              st.scores[b.user].remaining--;
+              
+              // Visual effects
+              const isGood = h.pts > 0;
+              const isBad = h.pts < 0;
+              
+              if (isGood) {
+                b.el.classList.add('pachinko-gold-glow');
+                playSound(SFX.gold, 1.0);
+                const holeEl = document.getElementById('pach-hole-' + hi);
+                if (holeEl) {
+                  holeEl.classList.remove('hole-flash-gold');
+                  void holeEl.offsetWidth;
+                  holeEl.classList.add('hole-flash-gold');
+                  setTimeout(() => holeEl.classList.remove('hole-flash-gold'), 500);
+                }
+              } else if (isBad) {
+                b.el.classList.add('pachinko-bad-glow');
+                playSound(SFX.bad, 1.0);
+                const holeEl = document.getElementById('pach-hole-' + hi);
+                if (holeEl) {
+                  holeEl.classList.remove('hole-flash-bad');
+                  void holeEl.offsetWidth;
+                  holeEl.classList.add('hole-flash-bad');
+                  setTimeout(() => holeEl.classList.remove('hole-flash-bad'), 500);
+                }
+              }
+              
+              // Remove ball element after animation
+              setTimeout(() => { if (b.el && b.el.parentNode) b.el.remove(); }, 700);
+              
+              st.scoredBalls++;
+              updatePachinkoScores();
+              
+              // Game over when all balls have scored
+              if (st.scoredBalls >= st.totalBalls && st.phase !== 'finished') {
+                st.phase = 'finished';
+                // Small delay so the last ball's animation plays
+                setTimeout(() => { showPachinkoWinner(); }, 800);
+              }
+              break;
+            }
+          }
+          
+          // If somehow missed all holes (off-screen), just kill it
+          if (!b.scored && b.y > PACH.boardH + 50) {
+            b.scored = true;
+            b.alive = false;
+            st.scoredBalls++;
+            if (b.el && b.el.parentNode) b.el.remove();
+            // Check if game is done
+            if (st.scoredBalls >= st.totalBalls && st.phase !== 'finished') {
+              st.phase = 'finished';
+              setTimeout(() => { showPachinkoWinner(); }, 800);
+            }
+          }
+        }
+        
+        // Update visual position
+        if (b.alive) {
+          const displayOffset = PACH.ballDisplay / 2;
+          b.el.style.transform = `translate3d(${b.x - displayOffset}px, ${b.y - displayOffset}px, 0) rotate(${b.rot}deg)`;
+        }
+      }
+      
+      // Clean up dead balls from array periodically
+      if (st.balls.length > 100) {
+        st.balls = st.balls.filter(b => b.alive);
+      }
+    }
+
+    function updatePachinkoScores() {
+      if (!pachinkoState) return;
+      const list = document.getElementById('pachinko-scores-list');
+      const scores = pachinkoState.scores;
+      
+      // Sort by points descending
+      const sorted = Object.entries(scores).sort((a, b) => b[1].pts - a[1].pts);
+      
+      let html = '';
+      sorted.forEach(([user, data], idx) => {
+        const rankCls = idx === 0 ? 'top-1' : idx === 1 ? 'top-2' : idx === 2 ? 'top-3' : '';
+        const rankEmoji = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : (idx + 1);
+        const ptsCls = data.pts < 0 ? 'negative' : '';
+        const ptsStr = (data.pts >= 0 ? '+' : '') + data.pts;
+        html += `<div class="pachinko-score-row ${rankCls}">
+          <div class="pachinko-score-rank">${rankEmoji}</div>
+          <div class="pachinko-score-name">${user}</div>
+          <div class="pachinko-score-pts ${ptsCls}">${ptsStr}</div>
+          <div class="pachinko-score-remaining">🎱${data.remaining}</div>
+        </div>`;
+      });
+      list.innerHTML = html;
+    }
+
+    function showPachinkoWinner() {
+      if (!pachinkoState) return;
+      const scores = pachinkoState.scores;
+      const sorted = Object.entries(scores).sort((a, b) => b[1].pts - a[1].pts);
+      
+      if (sorted.length === 0) { endEvent(); return; }
+      
+      const topScore = sorted[0][1].pts;
+      // Find all winners (ties)
+      const winners = sorted.filter(([u, d]) => d.pts === topScore);
+      
+      const winnerEl = document.getElementById('pachinko-winner');
+      const nameEl = document.getElementById('pachinko-winner-name');
+      const scoreEl = document.getElementById('pachinko-winner-score');
+      
+      if (winners.length === 1) {
+        nameEl.textContent = '🎰 ' + winners[0][0].toUpperCase() + ' 🎰';
+      } else {
+        nameEl.textContent = winners.map(w => w[0].toUpperCase()).join(' & ');
+      }
+      scoreEl.textContent = (topScore >= 0 ? '+' : '') + topScore + ' PTS';
+      
+      playSound(SFX.win, 1.0);
+      winnerEl.style.display = 'flex';
+      
+      // End everything after 8 seconds
+      setTimeout(() => {
+        winnerEl.style.display = 'none';
+        endEvent();
+      }, 8000);
+    }
+
+    function cleanupPachinko() {
+      // Remove all ball elements
+      if (pachinkoState) {
+        pachinkoState.balls.forEach(b => { if (b.el && b.el.parentNode) b.el.remove(); });
+        if (pachinkoState.settleTimeout) clearTimeout(pachinkoState.settleTimeout);
+      }
+      pachinkoState = null;
+      document.getElementById('pachinko-hud').style.display = 'none';
+      document.getElementById('pachinko-board').innerHTML = '';
+      document.getElementById('pachinko-scores-list').innerHTML = '';
+      document.getElementById('pachinko-winner').style.display = 'none';
+      // Restore drawings visibility
+      drawings.forEach(d => { d.el.style.opacity = 1; });
+    }
+
+    // --- FIGHT ---
+    function triggerFight() {
+      if (activeEvent === 'fight') { endEvent(); return; }
+      if (isEventActive()) endEvent();
+      forceAllSubsToEvent();
+      const eligible = drawings.filter(d => !d.el.classList.contains('showcase')&&!d.el.classList.contains('waiting')&&!d.el.classList.contains('spiral-to-lane'));
+      if (eligible.length < 4) { return; }
+      
+      activeEvent = 'fight'; rainMode = false;
+
+      // --- Balance: all drawings participate, each with 1 HP ---
+      // Fairness is enforced in fightTick: targets are chosen per-USER first,
+      // then a random drawing of that user is hit. This way a user with 9 drawings
+      // has the same chance of being targeted as a user with 1 drawing.
+
+      // Shuffle and split into two teams
+      const shuffled = eligible.sort(() => Math.random()-0.5);
+      const half = Math.ceil(shuffled.length/2);
+      const leftTeam = shuffled.slice(0, half);
+      const rightTeam = shuffled.slice(half);
+
+      // Every drawing gets 1 HP — simple and visual
+      leftTeam.forEach((d, i) => {
+        d.fightSide = 'left'; d.fightDead = false;
+        d.el.classList.remove('jumping');
+        d.el.classList.add('fight-red');
+        d.fightHP = 1;
+        d.fightMaxHP = 1;
+        d.fightSlotX = 80 + (i % 3) * 120;
+        d.fightSlotY = 150 + Math.floor(i / 3) * 180 + (i%2)*30;
+        d.fightPhase = Math.random()*7;
+      });
+      rightTeam.forEach((d, i) => {
+        d.fightSide = 'right'; d.fightDead = false;
+        d.el.classList.remove('jumping');
+        d.el.classList.add('fight-blue');
+        d.fightHP = 1;
+        d.fightMaxHP = 1;
+        d.fightSlotX = 1550 + (i % 3) * 120;
+        d.fightSlotY = 150 + Math.floor(i / 3) * 180 + (i%2)*30;
+        d.fightPhase = Math.random()*7;
+      });
+
+      // Total team HP = sum of individual HPs
+      const leftTotalHP = leftTeam.reduce((s,d) => s + d.fightHP, 0);
+      const rightTotalHP = rightTeam.reduce((s,d) => s + d.fightHP, 0);
+
+      // Kill interval scales with fighter count: more fighters = faster hits
+      // Base interval ~1.5s, scales down with more fighters, min 0.6s
+      const totalFighters = eligible.length;
+      const baseInterval = Math.max(600, 1500 - totalFighters * 50);
+
+      fightState = {
+        phase: 'lineup',
+        leftTeam, rightTeam,
+        leftTotalHP: leftTotalHP, rightTotalHP: rightTotalHP,
+        leftMaxHP: leftTotalHP, rightMaxHP: rightTotalHP,
+        nextHitTime: 0,
+        baseInterval: baseInterval,
+        wilhelmPlayed: false,
+        hitCount: 0
+      };
+
+      // Show HUD
+      const hud = document.getElementById('fight-hud');
+      hud.style.display = 'block';
+      document.getElementById('hp-left').style.width = '100%';
+      document.getElementById('hp-right').style.width = '100%';
+      document.getElementById('hp-label-left').textContent = `🔴 EQUIPO ROJO (${leftTeam.length})`;
+      document.getElementById('hp-label-right').textContent = `🔵 EQUIPO AZUL (${rightTeam.length})`;
+      document.getElementById('fight-text').style.display = 'none';
+      document.getElementById('fight-winner-text').style.display = 'none';
+
+
+      // A los 5s de prepararse, arranca el countdown 3, 2, 1, FIGHT!
+      setTimeout(() => {
+        if (activeEvent !== 'fight') return;
+        let count = 3;
+        const ft = document.getElementById('fight-text');
+        
+        function tickCountdown() {
+          // Si el evento se canceló en el medio, cortamos acá
+          if (activeEvent !== 'fight') {
+             ft.style.display = 'none';
+             return;
+          }
+          
+          ft.style.display = 'block';
+          
+          // Truco para reiniciar la animación CSS en cada cambio de texto
+          ft.style.animation = 'none';
+          void ft.offsetWidth; // Forzamos un reflow
+          
+          if (count > 0) {
+            ft.textContent = count;
+            ft.style.animation = 'fightPulse 0.3s ease-in-out 1'; // 1 latido por número
+            count--;
+            setTimeout(tickCountdown, 1000);
+          } else if (count === 0) {
+            ft.textContent = 'FIGHT!';
+            ft.style.animation = 'fightPulse 0.3s ease-in-out 3';
+            playSound(SFX.fight, 1.0);
+            count--;
+            setTimeout(tickCountdown, 1500); // Espera 1.5s leyendo el FIGHT y arranca
+          } else {
+            // Se esconde el texto y arranca a bajar vida
+            ft.style.display = 'none';
+            if (fightState) {
+              fightState.phase = 'fighting';
+              fightState.nextHitTime = Date.now() + 500 + Math.random() * fightState.baseInterval;
+            }
+          }
+        }
+        
+        tickCountdown();
+      }, 5000);
+    }
+
+    function fightTick(dt) {
+      if (!fightState || fightState.phase !== 'fighting') return;
+      const now = Date.now();
+      
+      if (now >= fightState.nextHitTime) {
+        const leftAlive = fightState.leftTeam.filter(d => !d.fightDead);
+        const rightAlive = fightState.rightTeam.filter(d => !d.fightDead);
+        if (leftAlive.length === 0 || rightAlive.length === 0) { finishFight(); return; }
+
+        // Pick attacker side randomly, the other side takes damage
+        const attackSide = Math.random() < 0.5 ? 'left' : 'right';
+        const defenders = attackSide === 'left' ? rightAlive : leftAlive;
+        
+        // --- BALANCE: pick a USER first (equal chance per user), then a random drawing of that user ---
+        // This prevents users with many drawings from "tanking" more hits
+        const defenderUsers = [...new Set(defenders.map(d => d.user))];
+        const targetUser = defenderUsers[Math.floor(Math.random() * defenderUsers.length)];
+        const targetDrawings = defenders.filter(d => d.user === targetUser);
+        const target = targetDrawings[Math.floor(Math.random() * targetDrawings.length)];
+        fightState.hitCount++;
+        
+        // 25% chance the hit is blocked (shield sound, no damage)
+        const blocked = Math.random() < 0.25;
+        
+        if (blocked) {
+          playSound(SFX.shield, 1.0);
+          target.el.style.filter = 'brightness(2)';
+          setTimeout(() => { if (!target.fightDead) target.el.style.filter = ''; }, 100);
+        } else {
+          target.fightHP--;
+          playSound(SFX.sword, 1.0);
+
+          target.el.style.filter = 'brightness(3)';
+          setTimeout(() => { if (!target.fightDead) target.el.style.filter = ''; }, 150);
+
+          // Update team total HP
+          if (attackSide === 'left') fightState.rightTotalHP--;
+          else fightState.leftTotalHP--;
+
+          // Update HP bars
+          document.getElementById('hp-left').style.width = Math.max(0, fightState.leftTotalHP / fightState.leftMaxHP * 100) + '%';
+          document.getElementById('hp-right').style.width = Math.max(0, fightState.rightTotalHP / fightState.rightMaxHP * 100) + '%';
+
+          // Did the target die?
+          if (target.fightHP <= 0) {
+            target.fightDead = true;
+            spawnExplosion(target.x, target.y);
+            target.el.style.transition = 'transform 0.3s ease-out, opacity 0.3s ease-out';
+            target.el.style.transform += ' scale(1.5)';
+            target.el.style.opacity = 0;
+            target.el.style.filter = '';
+            setTimeout(() => { target.el.style.transition = ''; }, 350);
+
+            // Wilhelm scream — once per fight, on a random death
+            // Guaranteed to play at least once: 35% on each kill after hit 3,
+            // forced on the final kill if it still hasn't played
+            const leftRemain = fightState.leftTeam.filter(d => !d.fightDead).length;
+            const rightRemain = fightState.rightTeam.filter(d => !d.fightDead).length;
+            const isFinalKill = (leftRemain === 0 || rightRemain === 0);
+            if (!fightState.wilhelmPlayed && (isFinalKill || (fightState.hitCount > 3 && Math.random() < 0.35))) {
+              playSound(SFX.wilhelm, 1.0);
+              fightState.wilhelmPlayed = true;
+            }
+
+            const defSide = attackSide === 'left' ? '🔵' : '🔴';
+
+            if (isFinalKill) {
+              finishFight();
+              return;
+            }
+          } else {
+            const defSide = attackSide === 'left' ? '🔵' : '🔴';
+          }
+        }
+
+        // Next hit: random interval around baseInterval
+        fightState.nextHitTime = now + fightState.baseInterval * (0.5 + Math.random());
+      }
+    }
+
+    function finishFight() {
+      if (!fightState) return;
+      if (eventTimer) { clearTimeout(eventTimer); eventTimer = null; }
+      fightState.phase = 'victory';
+
+      const leftRemain = fightState.leftTeam.filter(d => !d.fightDead);
+      const rightRemain = fightState.rightTeam.filter(d => !d.fightDead);
+      const winningSide = leftRemain.length > 0 ? 'left' : 'right';
+      const winners = winningSide === 'left' ? leftRemain : rightRemain;
+      const sideEmoji = winningSide === 'left' ? '🔴' : '🔵';
+      const sideName = winningSide === 'left' ? 'ROJO' : 'AZUL';
+
+      playSound(SFX.win, 1.0);
+      // Show winner text
+      const wt = document.getElementById('fight-winner-text');
+      wt.textContent = `🏆 EQUIPO ${sideName} GANA!`;
+      wt.style.display = 'block';
+
+      // Position winners in center for victory dance - grid layout for many
+      const count = winners.length;
+      if (count <= 4) {
+        // Single row, well spaced
+        const spacing = Math.min(220, 1400 / count);
+        winners.forEach((d, i) => {
+          d.el.style.opacity = 1;
+          d.x = 960 - (count-1)*spacing/2 + i*spacing;
+          d.y = 450;
+        });
+      } else {
+        // Grid: 2 rows
+        const cols = Math.ceil(count / 2);
+        const spacingX = Math.min(220, 1400 / cols);
+        const spacingY = 200;
+        winners.forEach((d, i) => {
+          d.el.style.opacity = 1;
+          const row = Math.floor(i / cols);
+          const col = i % cols;
+          const rowCount = row === 0 ? cols : count - cols;
+          d.x = 960 - (rowCount-1)*spacingX/2 + col*spacingX;
+          d.y = 380 + row * spacingY;
+        });
+      }
+
+      // After 8s of victory dance, end the event
+      setTimeout(() => {
+        document.getElementById('fight-hud').style.display = 'none';
+        // Restore all (including "dead" ones)
+        drawings.forEach(d => { d.fightDead = false; d.el.style.opacity = 1; });
+        endEvent();
+      }, 8000);
+    }
+
+    // ==============================================================
+    //  RANDOM EVENT SCHEDULER
+    // ==============================================================
+    // Events triggered by reward redemptions or admin commands only.
+
+    // ==============================================================
+    // ==============================================================
+
+    function toggleRain() {
+      rainMode = !rainMode;
+      drawings.forEach(d => {
+        if (rainMode) { d.rainOriginX = d.x; d.rainSpeed = 0.8 + Math.random() * 2; d.rainPhase = Math.random() * 7; }
+        else { d.y = LANES[d.lane]; }
+      });
+    }
+
+    // ==============================================================
+
+    connectTwitch();
+    connectBot();
+    if (FEAT_PIXEL) connectPubSub();
+
+    // Ocultar el container del pixel art si está desactivado
+    if (!FEAT_PIXEL) {
+      document.getElementById('container').style.display = 'none';
+      document.getElementById('fight-hud').style.display = 'none';
+    }
+  </script>
+</body>
+</html>
