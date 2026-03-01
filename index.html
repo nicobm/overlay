@@ -246,7 +246,7 @@
       background: radial-gradient(ellipse at center, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.95) 100%);
     }
     #pachinko-winner-content {
-      position: relative; text-align: center;
+      position: relative; text-align: center; margin: 0 auto;
     }
     #pachinko-winner-title {
       font-family: 'Impact', 'Arial Black', sans-serif; font-size: 60px; font-weight: 900;
@@ -1492,16 +1492,21 @@
             const subType = msg.payload.subscription?.type;
             
             if (subType === 'channel.channel_points_custom_reward_redemption.add') {
-              const rewardTitle = event.reward?.title;
+              const rewardTitle = (event.reward?.title || '').trim();
               const redeemUser = (event.user_name || event.user_login || 'unknown').toLowerCase();
               
-              console.log('[eventsub] 🎯 redemption:', rewardTitle, 'por', redeemUser);
+              console.log('[eventsub] 🎯 redemption:', JSON.stringify(rewardTitle), 'por', redeemUser);
               
-              const handler = REWARD_MAP[rewardTitle];
+              // Lookup: try exact match first, then case-insensitive
+              let handler = REWARD_MAP[rewardTitle];
+              if (!handler) {
+                const key = Object.keys(REWARD_MAP).find(k => k.toLowerCase() === rewardTitle.toLowerCase());
+                if (key) handler = REWARD_MAP[key];
+              }
               if (handler) {
                 handler(redeemUser);
               } else {
-                console.log('[eventsub] recompensa sin handler:', rewardTitle);
+                console.log('[eventsub] recompensa sin handler:', JSON.stringify(rewardTitle), '— keys disponibles:', Object.keys(REWARD_MAP).join(', '));
               }
             }
           }
