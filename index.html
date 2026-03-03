@@ -265,6 +265,38 @@
       text-shadow: 3px 3px 0 #000; margin-top: 10px;
     }
 
+    /* === RADIO NOW PLAYING === */
+    #radio-widget {
+      position: fixed; bottom: 20px; right: 20px; z-index: 80000;
+      display: flex; align-items: center; gap: 10px;
+      pointer-events: none; opacity: 0;
+      transition: opacity 0.6s ease;
+    }
+    #radio-widget.visible { opacity: 1; }
+    #radio-icon {
+      font-size: 18px;
+      animation: radioIconPulse 2s ease-in-out infinite;
+    }
+    @keyframes radioIconPulse {
+      0%,100% { opacity: 0.7; } 50% { opacity: 1; }
+    }
+    #radio-now-playing {
+      font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      font-size: 16px; font-weight: 600;
+      color: #ffffff;
+      text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
+      max-width: 500px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    #radio-now-playing .radio-artist {
+      color: #ffffff;
+      text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
+    }
+    #radio-now-playing .radio-title {
+      color: rgba(255,255,255,0.85);
+      text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
+      font-weight: 400;
+    }
+
     .hidden { display: none !important; }
     .waiting { opacity: 0; }
     .spiral-to-lane { position: absolute !important; z-index: 99998 !important; will-change: transform; pointer-events: none; }
@@ -342,6 +374,13 @@
     <div id="pachinko-timer-bar"><div id="pachinko-timer-fill" style="width:100%"></div></div>
   </div>
 
+  <!-- RADIO WIDGET -->
+  <div id="radio-widget">
+    <span id="radio-icon">📻</span>
+    <div id="radio-now-playing">Conectando...</div>
+  </div>
+  <audio id="radio-audio" crossorigin="anonymous" preload="none"></audio>
+
   <!-- PACHINKO WINNER -->
   <div id="pachinko-winner">
     <div id="pachinko-winner-bg"></div>
@@ -372,6 +411,12 @@
     // Feature flags (default true si no se especifica)
     const FEAT_PIXEL      = hp.pixel      !== 'false';
     const FEAT_TRADUCTOR  = hp.traductor  !== 'false';
+    const FEAT_RADIO      = hp.radio      !== 'false';
+
+    // Radio: SomaFM Left Coast 70s (MP3 128kbps — sin patentes activas)
+    const RADIO_URL       = 'https://ice5.somafm.com/seventies-128-mp3';
+    const RADIO_CHANNEL   = 'seventies'; // ID en api.somafm.com
+    const RADIO_VOLUME    = parseFloat(hp.radio_vol || '1');
 
     // Pixel overlay params
     let channelParam = hp.channel || 'laumehdi';
@@ -554,7 +599,7 @@
 
     // === FIGHT SOUNDS ===
     // Files must be in the same directory as this HTML
-    function playSound(src, volume = 1.0) {
+    function playSound(src, volume = 0.75) {
       try {
         const audio = new Audio(src);
         audio.volume = volume;
@@ -2319,7 +2364,7 @@
               
               if (isGood) {
                 b.el.classList.add('pachinko-gold-glow');
-                playSound(SFX.gold, 1.0);
+                playSound(SFX.gold, 0.75);
                 const holeEl = document.getElementById('pach-hole-' + hi);
                 if (holeEl) {
                   holeEl.classList.remove('hole-flash-gold');
@@ -2329,7 +2374,7 @@
                 }
               } else if (isBad) {
                 b.el.classList.add('pachinko-bad-glow');
-                playSound(SFX.bad, 1.0);
+                playSound(SFX.bad, 0.75);
                 const holeEl = document.getElementById('pach-hole-' + hi);
                 if (holeEl) {
                   holeEl.classList.remove('hole-flash-bad');
@@ -2428,7 +2473,7 @@
       }
       scoreEl.textContent = (topScore >= 0 ? '+' : '') + topScore + ' PTS';
       
-      playSound(SFX.win, 1.0);
+      playSound(SFX.win, 0.75);
       winnerEl.style.display = 'flex';
       
       // End everything after 8 seconds
@@ -2554,7 +2599,7 @@
           } else if (count === 0) {
             ft.textContent = 'FIGHT!';
             ft.style.animation = 'fightPulse 0.3s ease-in-out 3';
-            playSound(SFX.fight, 1.0);
+            playSound(SFX.fight, 0.75);
             count--;
             setTimeout(tickCountdown, 1500); // Espera 1.5s leyendo el FIGHT y arranca
           } else {
@@ -2596,12 +2641,12 @@
         const blocked = Math.random() < 0.25;
         
         if (blocked) {
-          playSound(SFX.shield, 1.0);
+          playSound(SFX.shield, 0.75);
           target.el.style.filter = 'brightness(2)';
           setTimeout(() => { if (!target.fightDead) target.el.style.filter = ''; }, 100);
         } else {
           target.fightHP--;
-          playSound(SFX.sword, 1.0);
+          playSound(SFX.sword, 0.75);
 
           target.el.style.filter = 'brightness(3)';
           setTimeout(() => { if (!target.fightDead) target.el.style.filter = ''; }, 150);
@@ -2631,7 +2676,7 @@
             const rightRemain = fightState.rightTeam.filter(d => !d.fightDead).length;
             const isFinalKill = (leftRemain === 0 || rightRemain === 0);
             if (!fightState.wilhelmPlayed && (isFinalKill || (fightState.hitCount > 3 && Math.random() < 0.35))) {
-              playSound(SFX.wilhelm, 1.0);
+              playSound(SFX.wilhelm, 0.75);
               fightState.wilhelmPlayed = true;
             }
 
@@ -2663,7 +2708,7 @@
       const sideEmoji = winningSide === 'left' ? '🔴' : '🔵';
       const sideName = winningSide === 'left' ? 'ROJO' : 'AZUL';
 
-      playSound(SFX.win, 1.0);
+      playSound(SFX.win, 0.75);
       // Show winner text
       const wt = document.getElementById('fight-winner-text');
       wt.textContent = `🏆 EQUIPO ${sideName} GANA!`;
@@ -2730,6 +2775,87 @@
       document.getElementById('container').style.display = 'none';
       document.getElementById('fight-hud').style.display = 'none';
     }
+
+    // ==============================================================
+    //  RADIO — SomaFM Left Coast 70s + metadata via API pública
+    // ==============================================================
+    (function initRadio() {
+      if (!FEAT_RADIO) {
+        document.getElementById('radio-widget').style.display = 'none';
+        return;
+      }
+
+      const audioEl   = document.getElementById('radio-audio');
+      const widget    = document.getElementById('radio-widget');
+      const npDisplay = document.getElementById('radio-now-playing');
+      let lastTitle   = '';
+
+      // ── Iniciar reproducción del stream ─────────────────────────
+      audioEl.src    = RADIO_URL;
+      audioEl.volume = Math.max(0, Math.min(1, RADIO_VOLUME));
+      audioEl.play().then(() => {
+        console.log('[radio] ▶️ reproduciendo:', RADIO_URL);
+        widget.classList.add('visible');
+      }).catch(err => {
+        console.warn('[radio] autoplay bloqueado:', err.message);
+        widget.classList.add('visible');
+        npDisplay.textContent = '⏸ Autoplay bloqueado';
+      });
+
+      // Reconnect on error
+      audioEl.onerror = () => {
+        console.warn('[radio] error en stream, reintentando en 10s...');
+        npDisplay.innerHTML = '<span style="opacity:0.5">Reconectando...</span>';
+        setTimeout(() => {
+          audioEl.src = RADIO_URL;
+          audioEl.play().catch(() => {});
+        }, 10000);
+      };
+
+      // ── Metadata via SomaFM public JSON API ────────────────────
+      // Mucho más confiable que ICY parsing — no depende de CORS headers
+      async function fetchSomaMetadata() {
+        try {
+          const resp = await fetch('https://api.somafm.com/channels.json', {
+            signal: AbortSignal.timeout(8000)
+          });
+          const data = await resp.json();
+          const ch = data.channels.find(c => c.id === RADIO_CHANNEL);
+          if (ch && ch.lastPlaying) {
+            updateNowPlaying(ch.lastPlaying);
+          }
+        } catch(e) {
+          console.warn('[radio] error fetching SomaFM metadata:', e.message);
+        }
+      }
+
+      function updateNowPlaying(rawTitle) {
+        if (!rawTitle || rawTitle === lastTitle) return;
+        lastTitle = rawTitle;
+
+        // SomaFM format: "Artista - Título"
+        const sepIdx = rawTitle.indexOf(' - ');
+        if (sepIdx > 0) {
+          const artist = rawTitle.substring(0, sepIdx).trim();
+          const title  = rawTitle.substring(sepIdx + 3).trim();
+          npDisplay.innerHTML = '<span class="radio-artist">' + escapeHtml(artist) + '</span> <span class="radio-title">— ' + escapeHtml(title) + '</span>';
+        } else {
+          npDisplay.innerHTML = '<span class="radio-artist">' + escapeHtml(rawTitle) + '</span>';
+        }
+
+        console.log('[radio] 🎵 now playing:', rawTitle);
+      }
+
+      function escapeHtml(str) {
+        return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+      }
+
+      // Polling cada 15 segundos
+      fetchSomaMetadata();
+      setInterval(fetchSomaMetadata, 15000);
+
+      console.log('[radio] 📻 SomaFM Left Coast 70s — vol:', RADIO_VOLUME);
+    })();
   </script>
 </body>
 </html>
