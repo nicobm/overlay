@@ -352,8 +352,7 @@
     </div>
   </div>
 
-  <!-- PING audio preloaded for new-user alerts -->
-  <audio id="ping-audio" src="ping.ogg" preload="auto"></audio>
+  
   <audio id="pachinko-gold-audio" src="gold.ogg" preload="auto"></audio>
   <audio id="pachinko-bad-audio" src="bad.ogg" preload="auto"></audio>
 
@@ -1208,11 +1207,7 @@
           if (/^[🤖🎨⚠️]/.test(msg)) return; // mensajes de sistema del bot
           if (msg.startsWith('Mis redes') || msg.startsWith('Mi Instagram') || msg.startsWith('Mi canal') || msg.startsWith('Para pintar') || msg.startsWith('Discord:')) return; // respuestas a comandos
         }
-        // Ping de bienvenida para usuarios nuevos (no para el owner ni el bot)
-        if (!botSeenUsers.has(user) && user !== BOT_OWNER.toLowerCase() && user !== BOT_NICK.toLowerCase()) {
-          console.log('[ping] 🔔 nuevo usuario (via bot):', user, '— reproduciendo ping.ogg');
-          botPlayPing();
-        }
+
         botSeenUsers.add(user);
         // Traducción (solo mensajes normales, no comandos)
         if (msg.startsWith('!')) {
@@ -1264,6 +1259,7 @@
     let botPixelTimer = null;
     let botPingTimer = null;
 
+
     function botCleanText(text) {
       text = text.replace(/[\u{1F300}-\u{1FFFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}]/gu, ' ');
       return text.split(/\s+/).filter(w => !BOT_EMOTES.has(w.toLowerCase())).join(' ').trim();
@@ -1275,16 +1271,7 @@
       return true;
     }
 
-    function botPlayPing() {
-      try {
-        const a = document.getElementById('ping-audio');
-        if (a) {
-          a.volume = 1.0;
-          a.currentTime = 0;
-          a.play().catch(err => console.warn('[ping] autoplay blocked:', err.message));
-        }
-      } catch(e) { console.warn('[ping] error playing ping:', e); }
-    }
+
 
     function botScheduleSocials() {
       if (botSocialsTimer) clearInterval(botSocialsTimer);
