@@ -2778,6 +2778,7 @@
 
     // ==============================================================
     //  RADIO — SomaFM Left Coast 70s + metadata via API pública
+    //  Con sistema anti-stutter: detecta buffering loops y reconecta
     // ==============================================================
     (function initRadio() {
       if (!FEAT_RADIO) {
@@ -2790,6 +2791,124 @@
       const npDisplay = document.getElementById('radio-now-playing');
       let lastTitle   = '';
 
+      // ── Anti-stutter: detectar buffering repetitivo ────────────
+      // Si el audio entra en "waiting" (buffering) muchas veces en
+      // una ventana corta de tiempo, significa que el stream está
+      // roto y no va a recuperarse solo — hay que hacer hard reconnect.
+      const STUTTER_WINDOW_MS   = 20000;  // ventana de detección: 20s
+      const STUTTER_THRESHOLD   = 4;      // 4+ stalls en esa ventana = roto
+      const RECONNECT_BASE_MS   = 3000;   // primer retry: 3s
+      const RECONNECT_MAX_MS    = 60000;  // max backoff: 60s
+      let stallTimestamps       = [];     // timestamps de cada stall
+      let reconnectDelay        = RECONNECT_BASE_MS;
+      let reconnectTimer        = null;
+      let isReconnecting        = false;
+      let healthCheckInterval   = null;
+
+      // ── Función de reconexión limpia (hard reconnect) ──────────
+      function hardReconnect(reason) {
+        if (isReconnecting) return;
+        isReconnecting = true;
+        stallTimestamps = [];  // reset stall counter
+
+        console.warn('[radio] 🔄 hard reconnect — motivo:', reason, '| retry en', reconnectDelay + 'ms');
+        npDisplay.innerHTML = '<span style="opacity:0.5">Reconectando...</span>';
+
+        // Parar todo: quitar src, abortar cualquier descarga en curso
+        audioEl.pause();
+        audioEl.removeAttribute('src');
+        audioEl.load();  // aborta el stream actual completamente
+
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          isReconnecting = false;
+          // Reconectar con un cache-buster para evitar CDN cacheado roto
+          audioEl.src = RADIO_URL + (RADIO_URL.includes('?') ? '&' : '?') + '_t=' + Date.now();
+          audioEl.load();
+          audioEl.play().then(() => {
+            console.log('[radio] ✅ reconectado exitosamente');
+            reconnectDelay = RECONNECT_BASE_MS;  // reset backoff
+          }).catch(err => {
+            console.warn('[radio] reconexión falló:', err.message);
+            // Backoff exponencial
+            reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
+            isReconnecting = false;
+            hardReconnect('retry tras fallo');
+          });
+        }, reconnectDelay);
+      }
+
+      // ── Registrar stall y evaluar si estamos en buffering loop ─
+      function registerStall() {
+        const now = Date.now();
+        stallTimestamps.push(now);
+        // Limpiar stalls fuera de la ventana
+        stallTimestamps = stallTimestamps.filter(t => now - t < STUTTER_WINDOW_MS);
+
+        console.log('[radio] ⏳ stall #' + stallTimestamps.length + '/' + STUTTER_THRESHOLD +
+                     ' (ventana ' + (STUTTER_WINDOW_MS/1000) + 's)');
+
+        if (stallTimestamps.length >= STUTTER_THRESHOLD) {
+          hardReconnect('buffering loop detectado (' + stallTimestamps.length + ' stalls en ' + (STUTTER_WINDOW_MS/1000) + 's)');
+        }
+      }
+
+      // ── Event listeners del <audio> ────────────────────────────
+
+      // "waiting" = el browser necesita más datos para seguir reproduciendo
+      audioEl.addEventListener('waiting', () => {
+        if (!isReconnecting) registerStall();
+      });
+
+      // "stalled" = el browser dejó de recibir datos del stream
+      audioEl.addEventListener('stalled', () => {
+        if (!isReconnecting) registerStall();
+      });
+
+      // "playing" = reproducción exitosa (limpiar stalls viejos gradualmente)
+      audioEl.addEventListener('playing', () => {
+        // Si estamos reproduciendo bien, no resetear de golpe
+        // pero sí confirmar que el backoff puede volver al mínimo
+        reconnectDelay = RECONNECT_BASE_MS;
+        console.log('[radio] ▶️ playing OK');
+      });
+
+      // "error" = error de red o de decodificación — reconectar directo
+      audioEl.onerror = () => {
+        const code = audioEl.error ? audioEl.error.code : '?';
+        console.warn('[radio] ❌ error en stream (code ' + code + ')');
+        hardReconnect('onerror code=' + code);
+      };
+
+      // ── Health check periódico ─────────────────────────────────
+      // Cada 30s verificar que el audio realmente está reproduciendo.
+      // Si currentTime no avanza, el stream está muerto silenciosamente.
+      let lastCurrentTime = 0;
+      let lastCheckTime   = 0;
+      let frozenChecks    = 0;
+
+      healthCheckInterval = setInterval(() => {
+        if (isReconnecting || audioEl.paused) return;
+
+        const ct  = audioEl.currentTime;
+        const now = Date.now();
+
+        if (lastCheckTime > 0 && ct === lastCurrentTime && ct > 0) {
+          frozenChecks++;
+          console.warn('[radio] 🧊 currentTime congelado:', ct, '| checks:', frozenChecks);
+          if (frozenChecks >= 2) {  // 2 checks seguidos = 60s sin avanzar
+            frozenChecks = 0;
+            hardReconnect('currentTime congelado por ~60s');
+          }
+        } else {
+          frozenChecks = 0;
+        }
+
+        lastCurrentTime = ct;
+        lastCheckTime   = now;
+      }, 30000);
+
       // ── Iniciar reproducción del stream ─────────────────────────
       audioEl.src    = RADIO_URL;
       audioEl.volume = Math.max(0, Math.min(1, RADIO_VOLUME));
@@ -2801,16 +2920,6 @@
         widget.classList.add('visible');
         npDisplay.textContent = '⏸ Autoplay bloqueado';
       });
-
-      // Reconnect on error
-      audioEl.onerror = () => {
-        console.warn('[radio] error en stream, reintentando en 10s...');
-        npDisplay.innerHTML = '<span style="opacity:0.5">Reconectando...</span>';
-        setTimeout(() => {
-          audioEl.src = RADIO_URL;
-          audioEl.play().catch(() => {});
-        }, 10000);
-      };
 
       // ── Metadata via SomaFM public JSON API ────────────────────
       // Mucho más confiable que ICY parsing — no depende de CORS headers
@@ -2854,7 +2963,7 @@
       fetchSomaMetadata();
       setInterval(fetchSomaMetadata, 15000);
 
-      console.log('[radio] 📻 SomaFM Left Coast 70s — vol:', RADIO_VOLUME);
+      console.log('[radio] 📻 SomaFM Left Coast 70s — vol:', RADIO_VOLUME, '| anti-stutter: ON');
     })();
   </script>
 </body>
