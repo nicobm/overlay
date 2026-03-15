@@ -442,6 +442,11 @@
     const TRANSLATE_URL = 'https://translate.googleapis.com/translate_a/single';
     let translationErrorReported = false;
 
+    // ── Cache de traducciones y rate limiting ──────────────────────
+    const translationCache = new Map();       // key: "targetLang:original" → resultado formateado o null
+    const TRANSLATION_CACHE_MAX = 200;        // máximo de entradas en cache
+    const TRANSLATION_COOLDOWN_MS = 1500;     // mínimo 1.5s entre requests a Google
+    let lastTranslationTime = 0;
 
     let drawings = [], rainMode = false;
 
@@ -454,6 +459,24 @@
       }
       const isOwner = user.toLowerCase() === BOT_OWNER.toLowerCase();
       const targetLang = isOwner ? 'en' : 'es';
+
+      // Cache lookup — evita re-traducir frases que ya vimos
+      const cacheKey = targetLang + ':' + original.toLowerCase();
+      if (translationCache.has(cacheKey)) {
+        const cached = translationCache.get(cacheKey);
+        console.log('[traductor] 📋 cache hit:', JSON.stringify(original.slice(0, 40)));
+        if (cached === null) return null; // fue una frase que no necesitaba traducción
+        // Reemplazar el user del resultado cacheado con el user actual
+        return cached.replace(/\[.+?\]/, '[' + user + ']');
+      }
+
+      // Rate limiting — esperar si la última request fue muy reciente
+      const now = Date.now();
+      const elapsed = now - lastTranslationTime;
+      if (elapsed < TRANSLATION_COOLDOWN_MS) {
+        await new Promise(r => setTimeout(r, TRANSLATION_COOLDOWN_MS - elapsed));
+      }
+      lastTranslationTime = Date.now();
 
       try {
         const gUrl = TRANSLATE_URL + '?client=gtx&sl=auto&tl=' + targetLang + '&dt=t&q=' + encodeURIComponent(original);
@@ -475,17 +498,24 @@
         const detected = (Array.isArray(data) && data[2]) ? data[2].toLowerCase() : '';
 
         console.log('[traductor] 🌐 Google response → detected:', detected, '| translated:', translated?.slice(0, 80));
-        if (!translated) { return null; }
+        if (!translated) { translationCache.set(cacheKey, null); return null; }
 
         translationErrorReported = false;
 
         // Descartar si ya está en el idioma target
-        if (!isOwner && detected === 'es') { return null; }
-        if (isOwner && detected === 'en') { return null; }
-        if (translated.toLowerCase() === original.toLowerCase()) { return null; }
+        if (!isOwner && detected === 'es') { translationCache.set(cacheKey, null); return null; }
+        if (isOwner && detected === 'en') { translationCache.set(cacheKey, null); return null; }
+        if (translated.toLowerCase() === original.toLowerCase()) { translationCache.set(cacheKey, null); return null; }
 
         const arrow = (detected||'?') + ' > ' + targetLang;
-        return translated + ' [' + user + '] (' + arrow + ')';
+        const result = translated + ' [' + user + '] (' + arrow + ')';
+        // Guardar en cache (con límite para no crecer infinito)
+        if (translationCache.size >= TRANSLATION_CACHE_MAX) {
+          const firstKey = translationCache.keys().next().value;
+          translationCache.delete(firstKey);
+        }
+        translationCache.set(cacheKey, result);
+        return result;
       } catch(e) {
         console.error('[traductor] ❌ Google Translate:', e.message);
         if (!translationErrorReported) { translationErrorReported = true; botSendChat('⚠️ Traducción no disponible — ' + e.message); }
@@ -502,6 +532,7 @@
     let activeEvent = null; // 'boom'|'pogo'|'fight'|'volcano'|'confetti'|'tornado'|'thriller'|'taiko'|'quake'|'race'|'space'|'whirlpool'|'pachinko'|null
     let eventTimer = null;
     let fightState = null;
+    let raceWinnerFound = false;
 
     // === UNIFIED REWARD QUEUE ===
     // ALL paid rewards (except Borrar) go through this queue.
@@ -553,10 +584,10 @@
         team.push(d);
         if(side==='left'){fightState.leftTotalHP+=d.fightHP;fightState.leftMaxHP+=d.fightHP;}
         else{fightState.rightTotalHP+=d.fightHP;fightState.rightMaxHP+=d.fightHP;}
-        document.getElementById('hp-left').style.width = Math.max(0, fightState.leftTotalHP / fightState.leftMaxHP * 100) + '%';
-        document.getElementById('hp-right').style.width = Math.max(0, fightState.rightTotalHP / fightState.rightMaxHP * 100) + '%';
-        document.getElementById('hp-label-left').textContent = `🔴 EQUIPO ROJO (${fightState.leftTeam.filter(dd=>!dd.fightDead).length})`;
-        document.getElementById('hp-label-right').textContent = `🔵 EQUIPO AZUL (${fightState.rightTeam.filter(dd=>!dd.fightDead).length})`;
+        $hpLeft.style.width = Math.max(0, fightState.leftTotalHP / fightState.leftMaxHP * 100) + '%';
+        $hpRight.style.width = Math.max(0, fightState.rightTotalHP / fightState.rightMaxHP * 100) + '%';
+        $hpLabelL.textContent = `🔴 EQUIPO ROJO (${fightState.leftTeam.filter(dd=>!dd.fightDead).length})`;
+        $hpLabelR.textContent = `🔵 EQUIPO AZUL (${fightState.rightTeam.filter(dd=>!dd.fightDead).length})`;
       }
     }
 
@@ -599,11 +630,25 @@
 
     // === FIGHT SOUNDS ===
     // Files must be in the same directory as this HTML
+    // Audio pool: reusar objetos Audio en vez de crear uno nuevo por cada sonido
+    const audioPool = {};
+    const AUDIO_POOL_SIZE = 4; // max instancias simultáneas por sonido
     function playSound(src, volume = 0.75) {
       try {
-        const audio = new Audio(src);
-        audio.volume = volume;
-        audio.play().catch(() => {}); // ignore autoplay errors silently
+        if (!audioPool[src]) {
+          audioPool[src] = [];
+          for (let i = 0; i < AUDIO_POOL_SIZE; i++) {
+            const a = new Audio(src);
+            a.volume = volume;
+            audioPool[src].push(a);
+          }
+        }
+        const pool = audioPool[src];
+        // Buscar uno que no esté sonando, o reusar el más viejo
+        const free = pool.find(a => a.paused || a.ended) || pool[0];
+        free.volume = volume;
+        free.currentTime = 0;
+        free.play().catch(() => {});
       } catch(e) {}
     }
     const SFX = {
@@ -618,14 +663,26 @@
 
     const LANES = [10, 40, 70, 100], SPEEDS = [2, 3.5, 2.5, 4.5], Z_INDEXES = [5, 20, 10, 30];
 
+    // ── Cached DOM elements (avoid getElementById in hot loops) ────
+    const $container  = document.getElementById('container');
+    const $fightHud   = document.getElementById('fight-hud');
+    const $hpLeft     = document.getElementById('hp-left');
+    const $hpRight    = document.getElementById('hp-right');
+    const $hpLabelL   = document.getElementById('hp-label-left');
+    const $hpLabelR   = document.getElementById('hp-label-right');
+    const $raceWinner = document.getElementById('race-winner');
+    const $fightText  = document.getElementById('fight-text');
+    const $fightWinTxt= document.getElementById('fight-winner-text');
+
 
     function getMinXInLane(laneIdx, excludeObj) {
       let minX = Infinity;
-      drawings.forEach(d => {
-        if (d !== excludeObj && d.lane === laneIdx && !d.el.classList.contains('showcase')) {
-          if (d.x < minX) minX = d.x;
+      for (let i = 0, len = drawings.length; i < len; i++) {
+        const d = drawings[i];
+        if (d !== excludeObj && d.lane === laneIdx && !d.isShowcase && d.x < minX) {
+          minX = d.x;
         }
-      });
+      }
       return minX === Infinity ? -200 : minX;
     }
 
@@ -642,14 +699,14 @@
     // Restore all drawings to normal lane walking after any event
     function restoreToLanes() {
       drawings.forEach((d, idx) => {
-        if (d.el.classList.contains('showcase') || d.el.classList.contains('waiting')) return;
+        if (d.isShowcase || d.isWaiting) return;
         d.el.style.opacity = 1;
         d.el.classList.remove('jumping', 'fight-red', 'fight-blue');
         const laneIdx = idx % LANES.length;
         d.lane = laneIdx; d.y = LANES[laneIdx]; d.speed = SPEEDS[laneIdx];
         d.el.style.zIndex = Z_INDEXES[laneIdx];
         d.x = getMinXInLane(laneIdx, d) - 350;
-        d.el.style.transform = `translate3d(${d.x}px, ${d.y}px, 0)`;
+        d.el.style.transform = `translate3d(${d.x|0}px,${d.y|0}px, 0)`;
         d.fightSide = undefined;
         d.fightDead = false;
       });
@@ -657,12 +714,16 @@
 
     function endEvent() {
       if (eventTimer) { clearTimeout(eventTimer); eventTimer = null; }
+      if (fightVictoryTimer) { clearTimeout(fightVictoryTimer); fightVictoryTimer = null; }
+      if (quakeShakeTimer) { clearTimeout(quakeShakeTimer); quakeShakeTimer = null; }
       const evName = activeEvent;
       activeEvent = null;
       fightState = null;
-      document.getElementById('fight-hud').style.display = 'none';
-      document.getElementById('container').classList.remove('screen-shake');
-      document.getElementById('race-winner').classList.remove('show');
+      $fightHud.style.display = 'none';
+      $fightText.style.display = 'none';
+      $fightWinTxt.style.display = 'none';
+      $container.classList.remove('screen-shake');
+      $raceWinner.classList.remove('show');
       // Clean up pachinko
       if (evName === 'pachinko') { cleanupPachinko(); }
       // If there's a queued reward, skip restoring to lanes
@@ -677,39 +738,46 @@
     function isEventActive() { return activeEvent !== null; }
 
     // === EXPLOSION PARTICLES ===
+    // Particles are tracked in a shared array and animated in the main loop
+    let particles = [];
+    const PARTICLE_COLORS = ['#dc322f','#cb4b16','#b58900','#ffff55','#ff5555','#ffffff'];
+
     function spawnExplosion(x, y) {
-      const particleCount = 12;
-      const container = document.getElementById('container');
-      for (let i = 0; i < particleCount; i++) {
+      const cx = x + 80, cy = y + 80;
+      const startTime = performance.now();
+      for (let i = 0; i < 12; i++) {
         const p = document.createElement('div');
         const size = 6 + Math.random() * 10;
-        const angle = (Math.PI * 2 / particleCount) * i + (Math.random() - 0.5) * 0.5;
+        const angle = (Math.PI * 2 / 12) * i + (Math.random() - 0.5) * 0.5;
         const speed = 80 + Math.random() * 120;
-        const dx = Math.cos(angle) * speed;
-        const dy = Math.sin(angle) * speed;
-        const colors = ['#dc322f','#cb4b16','#b58900','#ffff55','#ff5555','#ffffff'];
-        const color = colors[Math.floor(Math.random() * colors.length)];
-        
-        p.style.cssText = `position:absolute;left:${x + 80}px;top:${y + 80}px;width:${size}px;height:${size}px;background:${color};border-radius:50%;pointer-events:none;z-index:99990;box-shadow:0 0 ${size}px ${color};`;
-        container.appendChild(p);
-        
-        const startTime = performance.now();
-        const duration = 400 + Math.random() * 300;
-        
-        function animParticle(now) {
-          const elapsed = now - startTime;
-          const progress = Math.min(elapsed / duration, 1);
-          const ease = 1 - Math.pow(1 - progress, 2);
-          const px = x + 80 + dx * ease;
-          const py = y + 80 + dy * ease - 30 * ease; // slight upward arc
-          const scale = 1 - progress * 0.7;
-          const opacity = 1 - progress;
-          p.style.transform = `translate(${dx * ease}px, ${dy * ease - 40 * ease}px) scale(${scale})`;
-          p.style.opacity = opacity;
-          if (progress < 1) requestAnimationFrame(animParticle);
-          else p.remove();
+        const color = PARTICLE_COLORS[Math.floor(Math.random() * PARTICLE_COLORS.length)];
+        p.style.cssText = `position:absolute;left:${cx}px;top:${cy}px;width:${size}px;height:${size}px;background:${color};border-radius:50%;pointer-events:none;z-index:99990;box-shadow:0 0 ${size}px ${color};`;
+        $container.appendChild(p);
+        particles.push({
+          el: p,
+          dx: Math.cos(angle) * speed,
+          dy: Math.sin(angle) * speed,
+          startTime,
+          duration: 400 + Math.random() * 300,
+        });
+      }
+    }
+
+    // Called from animate() — updates all live particles in one pass
+    function tickParticles(now) {
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const pt = particles[i];
+        const progress = Math.min((now - pt.startTime) / pt.duration, 1);
+        if (progress >= 1) {
+          pt.el.remove();
+          particles[i] = particles[particles.length - 1];
+          particles.pop();
+          continue;
         }
-        requestAnimationFrame(animParticle);
+        const ease = 1 - (1 - progress) * (1 - progress);
+        const scale = 1 - progress * 0.7;
+        pt.el.style.transform = `translate(${(pt.dx * ease)|0}px,${(pt.dy * ease - 40 * ease)|0}px) scale(${scale.toFixed(2)})`;
+        pt.el.style.opacity = 1 - progress;
       }
     }
 
@@ -722,6 +790,9 @@
       lastTime = currentTime;
       const now = Date.now();
 
+      // Explosion particles (single pass for all)
+      if (particles.length > 0) tickParticles(currentTime);
+
       // Fight logic tick
       if (activeEvent === 'fight' && fightState && fightState.phase === 'fighting') {
         fightTick(dt);
@@ -732,48 +803,63 @@
         pachinkoTick(dt, now);
       }
 
+      // Pre-check: determine if we need event logic at all
+      const ev = activeEvent;
+
       for (let i = drawings.length - 1; i >= 0; i--) {
         let d = drawings[i];
-        if (d.el.classList.contains('showcase') || d.el.classList.contains('hidden') || d.el.classList.contains('spiral-to-lane')) continue;
-        if (d.el.classList.contains('waiting')) { d.el.style.transform = 'translate3d(-500px,-500px,0)'; continue; }
+        if (d.isShowcase || d.isHidden || d.isSpiral) continue;
+        if (d.isWaiting) { d.el.style.transform = 'translate3d(-500px,-500px,0)'; continue; }
+
+        // === FAST PATH: no event active, not rain, not dying → normal walk ===
+        if (!ev && !rainMode && !d.dying) {
+          d.x += d.speed * globalSpeedMultiplier * dt;
+          if (d.x > 2200) {
+            d.loops++;
+            if (d.loops >= 1) d.el.classList.remove('jumping');
+            const nl = Math.floor(Math.random()*LANES.length);
+            d.lane=nl; d.y=LANES[nl]; d.speed=SPEEDS[nl]; d.el.style.zIndex=Z_INDEXES[nl];
+            d.x = Math.min(-200, getMinXInLane(nl, d) - 350);
+          }
+          d.el.style.transform = `translate3d(${d.x|0}px,${d.y|0}px,0)`;
+          continue;
+        }
 
         // === BOOM (with collisions) ===
-        if (activeEvent === 'boom') {
-          d.el.style.opacity = 1;
+        if (ev === 'boom') {
           d.x += d.boomVx * dt; d.y += d.boomVy * dt; d.boomRot += d.boomRotSpeed * dt;
           if (d.x < -80) { d.x=-80; d.boomVx=Math.abs(d.boomVx); }
           if (d.x > 1840) { d.x=1840; d.boomVx=-Math.abs(d.boomVx); }
           if (d.y < -80) { d.y=-80; d.boomVy=Math.abs(d.boomVy); }
           if (d.y > 980) { d.y=980; d.boomVy=-Math.abs(d.boomVy); }
-          // Collisions with other drawings
-          for (let j = i - 1; j >= 0; j--) {
+          // Collisions with other drawings (skip if too many — O(N²) protection)
+          if (drawings.length <= 60) for (let j = i - 1; j >= 0; j--) {
             const o = drawings[j];
-            if (o.el.classList.contains('showcase')||o.el.classList.contains('hidden')) continue;
+            if (o.isShowcase||o.isHidden) continue;
             const dx = d.x - o.x, dy = d.y - o.y;
-            const dist = Math.sqrt(dx*dx + dy*dy);
-            if (dist < 140 && dist > 0) {
-              const nx = dx/dist, ny = dy/dist;
-              const overlap = (140 - dist) / 2;
-              d.x += nx * overlap; d.y += ny * overlap;
-              o.x -= nx * overlap; o.y -= ny * overlap;
-              // Swap velocity components along collision axis
-              const dvx = d.boomVx - o.boomVx, dvy = d.boomVy - o.boomVy;
-              const dot = dvx * nx + dvy * ny;
-              if (dot > 0) {
-                d.boomVx -= dot * nx * 0.8; d.boomVy -= dot * ny * 0.8;
-                o.boomVx += dot * nx * 0.8; o.boomVy += dot * ny * 0.8;
-                d.boomRotSpeed += (Math.random()-0.5)*4;
-                o.boomRotSpeed += (Math.random()-0.5)*4;
-              }
+            const distSq = dx*dx + dy*dy;
+            if (distSq >= 19600 || distSq === 0) continue; // 140² = 19600 — early exit sin sqrt
+            const dist = Math.sqrt(distSq);
+            const nx = dx/dist, ny = dy/dist;
+            const overlap = (140 - dist) / 2;
+            d.x += nx * overlap; d.y += ny * overlap;
+            o.x -= nx * overlap; o.y -= ny * overlap;
+            // Swap velocity components along collision axis
+            const dvx = d.boomVx - o.boomVx, dvy = d.boomVy - o.boomVy;
+            const dot = dvx * nx + dvy * ny;
+            if (dot > 0) {
+              d.boomVx -= dot * nx * 0.8; d.boomVy -= dot * ny * 0.8;
+              o.boomVx += dot * nx * 0.8; o.boomVy += dot * ny * 0.8;
+              d.boomRotSpeed += (Math.random()-0.5)*4;
+              o.boomRotSpeed += (Math.random()-0.5)*4;
             }
           }
-          d.el.style.transform = `translate3d(${d.x}px,${d.y}px,0) rotate(${d.boomRot}deg)`;
+          d.el.style.transform = `translate3d(${d.x|0}px,${d.y|0}px,0) rotate(${d.boomRot|0}deg)`;
           continue;
         }
 
         // === POGO ===
-        if (activeEvent === 'pogo') {
-          d.el.style.opacity = 1;
+        if (ev === 'pogo') {
           d.boomVy += 0.35 * dt; // gravity (lower = longer airtime)
           d.y += d.boomVy * dt;
           d.x += d.boomVx * dt;
@@ -783,13 +869,12 @@
           if (d.x < -80) { d.x = -80; d.boomVx = Math.abs(d.boomVx); }
           if (d.x > 1840) { d.x = 1840; d.boomVx = -Math.abs(d.boomVx); }
           d.boomRot += d.boomRotSpeed * dt;
-          d.el.style.transform = `translate3d(${d.x}px,${d.y}px,0) rotate(${d.boomRot}deg)`;
+          d.el.style.transform = `translate3d(${d.x|0}px,${d.y|0}px,0) rotate(${d.boomRot|0}deg)`;
           continue;
         }
 
         // === VOLCANO ===
-        if (activeEvent === 'volcano') {
-          d.el.style.opacity = 1;
+        if (ev === 'volcano') {
           d.boomVy += 0.25 * dt; // lighter gravity for high arcs
           d.y += d.boomVy * dt;
           d.x += d.boomVx * dt;
@@ -805,13 +890,12 @@
           // Cap at top of screen — bounce gently
           if (d.y < -200) { d.y = -200; d.boomVy = Math.abs(d.boomVy) * 0.3; }
           d.boomRot += d.boomRotSpeed * dt;
-          d.el.style.transform = `translate3d(${d.x}px,${d.y}px,0) rotate(${d.boomRot}deg)`;
+          d.el.style.transform = `translate3d(${d.x|0}px,${d.y|0}px,0) rotate(${d.boomRot|0}deg)`;
           continue;
         }
 
         // === CONFETTI (Salto) ===
-        if (activeEvent === 'confetti') {
-          d.el.style.opacity = 1;
+        if (ev === 'confetti') {
           // Strong gravity — they have WEIGHT, fall fast
           d.boomVy += 0.55 * dt;
           d.y += d.boomVy * dt;
@@ -830,13 +914,12 @@
           if (d.x < -80) { d.x = -80; d.boomVx = Math.abs(d.boomVx); }
           if (d.x > 1840) { d.x = 1840; d.boomVx = -Math.abs(d.boomVx); }
           d.boomRot += d.boomRotSpeed * dt;
-          d.el.style.transform = `translate3d(${d.x}px,${d.y}px,0) rotate(${d.boomRot}deg)`;
+          d.el.style.transform = `translate3d(${d.x|0}px,${d.y|0}px,0) rotate(${d.boomRot|0}deg)`;
           continue;
         }
 
         // === TORNADO ===
-        if (activeEvent === 'tornado') {
-          d.el.style.opacity = 1;
+        if (ev === 'tornado') {
           // Elapsed time for phase changes
           const elapsed = (now - d.tornadoStart) / 1000; // seconds
           
@@ -871,13 +954,12 @@
           const heightFactor = 1 - (d.y - 250) / 1200 * 0.3; // 0.85 to 1.1ish
           const scale = Math.max(0.6, Math.min(1.2, heightFactor));
           
-          d.el.style.transform = `translate3d(${d.x}px,${d.y}px,0) rotate(${d.boomRot}deg) scale(${scale.toFixed(2)})`;
+          d.el.style.transform = `translate3d(${d.x|0}px,${d.y|0}px,0) rotate(${d.boomRot|0}deg) scale(${scale.toFixed(2)})`;
           continue;
         }
 
         // === THRILLER (Zombie dance) ===
-        if (activeEvent === 'thriller') {
-          d.el.style.opacity = 1;
+        if (ev === 'thriller') {
           const elapsed = (now - d.tornadoStart) / 1000;
           
           // Slow zombie drift — all shuffling in same direction, wrapping around
@@ -900,13 +982,12 @@
           // Arms-out stretch effect via scaleX
           const stretch = 1 + Math.sin(elapsed * 0.9 + d.fightPhase) * 0.08;
           
-          d.el.style.transform = `translate3d(${d.x + lurch}px,${yBase}px,0) rotate(${tilt + twitch}deg) scaleX(${stretch.toFixed(2)})`;
+          d.el.style.transform = `translate3d(${(d.x + lurch)|0}px,${yBase|0}px,0) rotate(${(tilt + twitch)|0}deg) scaleX(${stretch.toFixed(2)})`;
           continue;
         }
 
         // === TAIKO (Synchronized dance) ===
-        if (activeEvent === 'taiko') {
-          d.el.style.opacity = 1;
+        if (ev === 'taiko') {
           const elapsed = (now - d.tornadoStart) / 1000;
           
           // All drawings use the SAME time-based animation — perfectly synchronized
@@ -950,13 +1031,12 @@
           }
           
           const baseY = d.taikoSlotY;
-          d.el.style.transform = `translate3d(${d.x}px,${baseY + yOff}px,0) rotate(${rot}deg) scale(${scX.toFixed(2)},${scY.toFixed(2)})`;
+          d.el.style.transform = `translate3d(${d.x|0}px,${(baseY + yOff)|0}px,0) rotate(${rot|0}deg) scale(${scX.toFixed(2)},${scY.toFixed(2)})`;
           continue;
         }
 
         // === EARTHQUAKE (Terremoto) ===
-        if (activeEvent === 'quake') {
-          d.el.style.opacity = 1;
+        if (ev === 'quake') {
           const elapsed = (now - d.tornadoStart) / 1000;
           // Gravity
           d.boomVy += 0.45 * dt;
@@ -981,13 +1061,12 @@
           d.boomRot += d.boomRotSpeed * dt;
           // Dampen rotation slightly
           d.boomRotSpeed *= 0.998;
-          d.el.style.transform = `translate3d(${d.x}px,${d.y}px,0) rotate(${d.boomRot}deg)`;
+          d.el.style.transform = `translate3d(${d.x|0}px,${d.y|0}px,0) rotate(${d.boomRot|0}deg)`;
           continue;
         }
 
         // === RACE (Carrera) ===
-        if (activeEvent === 'race') {
-          d.el.style.opacity = 1;
+        if (ev === 'race') {
           if (!d.raceFinished) {
             // Each drawing has its own raceMult (0.4 to 1.6) — big spread
             d.raceSpeed += (0.001 + Math.random() * 0.002) * d.raceMult * dt;
@@ -998,28 +1077,26 @@
             d.x += d.raceSpeed * dt;
             const wobble = Math.sin(now / 120 + d.fightPhase * 10) * (1 + d.raceSpeed * 0.6);
             const lean = d.raceSpeed * 3;
-            d.el.style.transform = `translate3d(${d.x}px,${d.y + wobble}px,0) rotate(${Math.min(lean, 12)}deg)`;
+            d.el.style.transform = `translate3d(${d.x|0}px,${(d.y + wobble)|0}px,0) rotate(${Math.min(lean, 12)}deg)`;
             if (d.x > 1850 && !d.raceFinished) {
               d.raceFinished = true;
-              const alreadyFinished = drawings.filter(dd => dd.raceFinished && dd !== d);
-              if (alreadyFinished.length === 0) {
-                const winEl = document.getElementById('race-winner');
-                winEl.innerText = `🏆 ${d.user.toUpperCase()} 🏆`;
-                winEl.classList.add('show');
+              if (!raceWinnerFound) {
+                raceWinnerFound = true;
+                $raceWinner.innerText = `🏆 ${d.user.toUpperCase()} 🏆`;
+                $raceWinner.classList.add('show');
                 if (eventTimer) clearTimeout(eventTimer);
                 eventTimer = setTimeout(endEvent, 3000);
               }
             }
           } else {
             const bob = Math.sin(now / 400) * 3;
-            d.el.style.transform = `translate3d(${d.x}px,${d.y + bob}px,0)`;
+            d.el.style.transform = `translate3d(${d.x|0}px,${(d.y + bob)|0}px,0)`;
           }
           continue;
         }
 
         // === ESPACIO (Space — like boom but floaty, no gravity) ===
-        if (activeEvent === 'space') {
-          d.el.style.opacity = 1;
+        if (ev === 'space') {
           // No gravity — they just float freely
           d.x += d.boomVx * dt;
           d.y += d.boomVy * dt;
@@ -1030,34 +1107,33 @@
           if (d.x > 1840) { d.x = 1840; d.boomVx = -Math.abs(d.boomVx); }
           if (d.y < -80) { d.y = -80; d.boomVy = Math.abs(d.boomVy); }
           if (d.y > 920) { d.y = 920; d.boomVy = -Math.abs(d.boomVy); }
-          // Collisions with other drawings
-          for (let j = i - 1; j >= 0; j--) {
+          // Collisions with other drawings (skip if too many — O(N²) protection)
+          if (drawings.length <= 60) for (let j = i - 1; j >= 0; j--) {
             const o = drawings[j];
-            if (o.el.classList.contains('showcase')||o.el.classList.contains('hidden')) continue;
+            if (o.isShowcase||o.isHidden) continue;
             const dx2 = d.x - o.x, dy2 = d.y - o.y;
-            const dist2 = Math.sqrt(dx2*dx2 + dy2*dy2);
-            if (dist2 < 140 && dist2 > 0) {
-              const nx = dx2/dist2, ny = dy2/dist2;
-              const overlap = (140 - dist2) / 2;
-              d.x += nx * overlap; d.y += ny * overlap;
-              o.x -= nx * overlap; o.y -= ny * overlap;
-              const dvx2 = d.boomVx - o.boomVx, dvy2 = d.boomVy - o.boomVy;
-              const dot2 = dvx2 * nx + dvy2 * ny;
-              if (dot2 > 0) {
-                d.boomVx -= dot2 * nx * 0.7; d.boomVy -= dot2 * ny * 0.7;
-                o.boomVx += dot2 * nx * 0.7; o.boomVy += dot2 * ny * 0.7;
-                d.boomRotSpeed += (Math.random()-0.5)*2;
-                o.boomRotSpeed += (Math.random()-0.5)*2;
-              }
+            const distSq2 = dx2*dx2 + dy2*dy2;
+            if (distSq2 >= 19600 || distSq2 === 0) continue;
+            const dist2 = Math.sqrt(distSq2);
+            const nx = dx2/dist2, ny = dy2/dist2;
+            const overlap = (140 - dist2) / 2;
+            d.x += nx * overlap; d.y += ny * overlap;
+            o.x -= nx * overlap; o.y -= ny * overlap;
+            const dvx2 = d.boomVx - o.boomVx, dvy2 = d.boomVy - o.boomVy;
+            const dot2 = dvx2 * nx + dvy2 * ny;
+            if (dot2 > 0) {
+              d.boomVx -= dot2 * nx * 0.7; d.boomVy -= dot2 * ny * 0.7;
+              o.boomVx += dot2 * nx * 0.7; o.boomVy += dot2 * ny * 0.7;
+              d.boomRotSpeed += (Math.random()-0.5)*2;
+              o.boomRotSpeed += (Math.random()-0.5)*2;
             }
           }
-          d.el.style.transform = `translate3d(${d.x}px,${d.y}px,0) rotate(${d.boomRot}deg)`;
+          d.el.style.transform = `translate3d(${d.x|0}px,${d.y|0}px,0) rotate(${d.boomRot|0}deg)`;
           continue;
         }
 
         // === REMOLINO (Whirlpool) ===
-        if (activeEvent === 'whirlpool') {
-          d.el.style.opacity = 1;
+        if (ev === 'whirlpool') {
           const elapsed = (now - d.tornadoStart) / 1000;
 
           // Center point drifts slowly around the screen
@@ -1101,24 +1177,22 @@
           const scaleFactor = 0.4 + Math.min(d.whirlRadius / 500, 1) * 0.8;
           const scale = Math.max(0.4, Math.min(1.3, scaleFactor));
 
-          d.el.style.transform = `translate3d(${d.x}px,${d.y}px,0) rotate(${d.boomRot}deg) scale(${scale.toFixed(2)})`;
+          d.el.style.transform = `translate3d(${d.x|0}px,${d.y|0}px,0) rotate(${d.boomRot|0}deg) scale(${scale.toFixed(2)})`;
           continue;
         }
 
         // === FIGHT ===
-        if (activeEvent === 'fight') {
-          if (d.fightDead) { d.el.style.opacity = 0; continue; }
+        if (ev === 'fight') {
+          if (d.fightDead) continue; // already hidden by fightTick death animation
           const fs = fightState;
           if (fs) {
             if (fs.phase === 'lineup') {
-              // Float to sides
-              const targetX = d.fightSide === 'left' ? d.fightSlotX : d.fightSlotX;
-              const targetY = d.fightSlotY;
-              d.x += (targetX - d.x) * 0.05 * dt;
-              d.y += (targetY - d.y) * 0.05 * dt;
+              // Float to slot position
+              d.x += (d.fightSlotX - d.x) * 0.05 * dt;
+              d.y += (d.fightSlotY - d.y) * 0.05 * dt;
               // Idle bobbing
               const bob = Math.sin(now / 600 + d.fightPhase) * 4;
-              d.el.style.transform = `translate3d(${d.x}px,${d.y + bob}px,0)`;
+              d.el.style.transform = `translate3d(${d.x|0}px,${(d.y + bob)|0}px,0)`;
             } else if (fs.phase === 'fighting') {
               // Each fighter has their own orbit target that shifts over time
               // Left team fights on the left-center, right team on the right-center
@@ -1142,23 +1216,21 @@
               if (d.y < 120) d.y = 120; if (d.y > 880) d.y = 880;
               
               const shake = Math.sin(now / 50 + d.fightPhase) * 3;
-              d.el.style.transform = `translate3d(${d.x}px,${d.y + shake}px,0)`;
+              d.el.style.transform = `translate3d(${d.x|0}px,${(d.y + shake)|0}px,0)`;
             } else if (fs.phase === 'victory') {
-              // Winners dance in center
-              if (d.fightDead) { d.el.style.opacity = 0; continue; }
+              // Winners dance in center (dead ones already filtered by continue above)
               const bob = Math.sin(now / 300 + d.fightPhase) * 15;
               const sway = Math.sin(now / 500 + d.fightPhase) * 10;
-              d.el.style.transform = `translate3d(${d.x + sway}px,${d.y + bob}px,0) scale(1.3)`;
+              d.el.style.transform = `translate3d(${(d.x + sway)|0}px,${(d.y + bob)|0}px,0) scale(1.3)`;
             }
           }
           continue;
         }
 
         // === PACHINKO ===
-        if (activeEvent === 'pachinko') {
+        if (ev === 'pachinko') {
           // Pachinko balls are handled by pachinkoTick — skip normal drawing animation
-          // Hide normal drawings during pachinko
-          d.el.style.opacity = 0;
+          // Drawings already hidden by triggerPachinko/joinActiveEvent
           continue;
         }
 
@@ -1166,7 +1238,7 @@
         if (rainMode) {
           d.el.style.opacity = 1; d.y += d.rainSpeed * dt;
           d.x = d.rainOriginX + Math.sin((now/800)+d.rainPhase)*20;
-          d.el.style.transform = `translate3d(${d.x}px,${d.y}px,0)`;
+          d.el.style.transform = `translate3d(${d.x|0}px,${d.y|0}px,0)`;
           if (d.y > 1100) { d.y = -180; d.rainOriginX = Math.random()*1800; }
           continue;
         }
@@ -1174,24 +1246,22 @@
         // === DYING ===
         if (d.dying) {
           d.vy += 0.5*dt; d.y += d.vy*dt; d.rot += 5*dt;
-          d.el.style.transform = `translate3d(${d.x}px,${d.y}px,0) rotate(${d.rot}deg)`;
+          d.el.style.transform = `translate3d(${d.x|0}px,${d.y|0}px,0) rotate(${d.rot|0}deg)`;
           d.el.style.opacity = (1 - d.y/1500);
           if (d.y > 1200) { d.el.remove(); activeCodes.delete(d.code); drawings.splice(i,1); }
           continue;
         }
 
         // === NORMAL WALK ===
-        d.el.style.opacity = 1;
         d.x += d.speed * globalSpeedMultiplier * dt;
         if (d.x > 2200) {
           d.loops++;
           if (d.loops >= 1) d.el.classList.remove('jumping');
-          const oldLane = d.lane;
           const nl = Math.floor(Math.random()*LANES.length);
           d.lane=nl; d.y=LANES[nl]; d.speed=SPEEDS[nl]; d.el.style.zIndex=Z_INDEXES[nl];
           d.x = Math.min(-200, getMinXInLane(nl, d) - 350);
         }
-        d.el.style.transform = `translate3d(${d.x}px,${d.y}px,0)`;
+        d.el.style.transform = `translate3d(${d.x|0}px,${d.y|0}px,0)`;
       }
       requestAnimationFrame(animate);
     }
@@ -1209,12 +1279,15 @@
     }
     function botSendChat(text) { botSend('PRIVMSG #' + CHANNEL + ' :' + text + '\r\n'); }
 
+    let botReconnectTimer = null;
+
     function connectBot() {
       if (!FEAT_TRADUCTOR) return;
       if (!BOT_NICK || !hp.bot_token) {
         console.warn('[traductor] faltan parámetros: bot_nick y/o bot_token');
         return;
       }
+      if (botReconnectTimer) { clearTimeout(botReconnectTimer); botReconnectTimer = null; }
       if (botWs) { try { botWs.close(); } catch(e){} }
       botWs = new WebSocket('wss://irc-ws.chat.twitch.tv:443');
       botWs.onopen = () => {
@@ -1231,7 +1304,7 @@
         if (botPingTimer) { clearInterval(botPingTimer); botPingTimer = null; }
         if (botSocialsTimer) { clearInterval(botSocialsTimer); botSocialsTimer = null; }
         if (botPixelTimer) { clearInterval(botPixelTimer); botPixelTimer = null; }
-        setTimeout(connectBot, 5000);
+        botReconnectTimer = setTimeout(connectBot, 5000);
       };
       botWs.onmessage = (e) => {
         const data = e.data;
@@ -1335,7 +1408,10 @@
     }
 
     // ── Primary WSS connection ─────────────────────────────────────
+    let twitchReconnectTimer = null;
+
     function connectTwitch() {
+      if (twitchReconnectTimer) { clearTimeout(twitchReconnectTimer); twitchReconnectTimer = null; }
       if (ws) { try{ws.close();}catch(e){} }
 
       const useChannelAuth = CHANNEL_TOKEN !== '';
@@ -1357,7 +1433,7 @@
       };
 
       ws.onclose = () => {
-        setTimeout(connectTwitch, 3000);
+        twitchReconnectTimer = setTimeout(connectTwitch, 3000);
       };
       ws.onerror = (e) => console.error('WS error', e);
       ws.onmessage = (e) => handleMessage(e.data);
@@ -1433,12 +1509,14 @@
       },
       'Lluvia': (user) => {
         queueReward('lluvia', () => {
-          rainMode = !rainMode;
+          rainMode = true;
           drawings.forEach(d => {
-            if (rainMode) { d.rainOriginX = d.x; d.rainSpeed = 0.8 + Math.random() * 2; d.rainPhase = Math.random() * 7; }
-            else { d.y = LANES[d.lane]; }
+            d.rainOriginX = d.x; d.rainSpeed = 0.8 + Math.random() * 2; d.rainPhase = Math.random() * 7;
           });
-        }, 50000);
+        }, 50000, () => {
+          rainMode = false;
+          drawings.forEach(d => { d.y = LANES[d.lane]; });
+        });
       },
       'Pelea':                  (user) => { queueOrRun('fight', triggerFight); },
       'Boom':                   (user) => { queueOrRun('boom', triggerBoom); },
@@ -1455,8 +1533,15 @@
       'Pachinko':               (user) => { queueOrRun('pachinko', triggerPachinko); },
     };
 
+    // Pre-computed lowercase lookup map — O(1) instead of O(n) find()
+    const REWARD_MAP_LC = {};
+    for (const key of Object.keys(REWARD_MAP)) {
+      REWARD_MAP_LC[key.toLowerCase()] = REWARD_MAP[key];
+    }
+
     let pubsubWs = null;
     let pubsubPingInterval = null;
+    let pubsubReconnectTimer = null;
     let eventsubSessionId = null;
     let eventsubKeepaliveTimeout = 15; // seconds, updated from welcome message
     let eventsubLastMessage = 0;
@@ -1467,6 +1552,7 @@
         console.warn('[eventsub] faltan parámetros: channel_token, channel_id, o client_id');
         return;
       }
+      if (pubsubReconnectTimer) { clearTimeout(pubsubReconnectTimer); pubsubReconnectTimer = null; }
       if (pubsubWs) { try { pubsubWs.close(); } catch(e){} }
 
       pubsubWs = new WebSocket('wss://eventsub.wss.twitch.tv/ws');
@@ -1512,13 +1598,24 @@
             const newUrl = msg.payload.session.reconnect_url;
             console.log('[eventsub] 🔄 reconnect a:', newUrl);
             const oldWs = pubsubWs;
-            const oldOnMessage = oldWs.onmessage;
-            const oldOnClose = oldWs.onclose;
-            const oldOnError = oldWs.onerror;
+            // Desactivar handlers de la conexión vieja para que no dispare reconexión
+            oldWs.onclose = null;
+            oldWs.onerror = null;
+            // Crear nueva conexión (hereda los handlers de la vieja)
             pubsubWs = new WebSocket(newUrl);
-            pubsubWs.onmessage = oldOnMessage;
-            pubsubWs.onerror = oldOnError;
-            pubsubWs.onclose = oldOnClose;
+            pubsubWs.onmessage = oldWs.onmessage;
+            pubsubWs.onerror = (e) => console.error('[eventsub] error:', e);
+            pubsubWs.onclose = () => {
+              console.log('[eventsub] 🔌 conexión cerrada, reconectando en 5s...');
+              if (pubsubPingInterval) { clearInterval(pubsubPingInterval); pubsubPingInterval = null; }
+              eventsubSessionId = null;
+              pubsubReconnectTimer = setTimeout(connectPubSub, 5000);
+            };
+            // Cerrar la vieja una vez que la nueva esté abierta
+            pubsubWs.onopen = () => {
+              console.log('[eventsub] ✅ nueva conexión abierta, cerrando vieja');
+              try { oldWs.close(); } catch(e){}
+            };
           }
           else if (msgType === 'notification') {
             const event = msg.payload.event;
@@ -1530,12 +1627,8 @@
               
               console.log('[eventsub] 🎯 redemption:', JSON.stringify(rewardTitle), 'por', redeemUser);
               
-              // Lookup: try exact match first, then case-insensitive
-              let handler = REWARD_MAP[rewardTitle];
-              if (!handler) {
-                const key = Object.keys(REWARD_MAP).find(k => k.toLowerCase() === rewardTitle.toLowerCase());
-                if (key) handler = REWARD_MAP[key];
-              }
+              // Lookup: try exact match first, then case-insensitive via pre-computed map
+              const handler = REWARD_MAP[rewardTitle] || REWARD_MAP_LC[rewardTitle.toLowerCase()];
               if (handler) {
                 handler(redeemUser);
               } else {
@@ -1555,7 +1648,7 @@
         console.log('[eventsub] 🔌 conexión cerrada, reconectando en 5s...');
         if (pubsubPingInterval) { clearInterval(pubsubPingInterval); pubsubPingInterval = null; }
         eventsubSessionId = null;
-        setTimeout(connectPubSub, 5000);
+        pubsubReconnectTimer = setTimeout(connectPubSub, 5000);
       };
 
       pubsubWs.onerror = (e) => {
@@ -1607,12 +1700,31 @@
     }
     function removeAllDrawingsGlobal() {
       drawings.forEach(d=>d.el.remove()); drawings=[];activeCodes.clear();subQueue=[];isShowcaseBusy=false;
+      if (showcaseTimer) { clearTimeout(showcaseTimer); showcaseTimer = null; }
       // If an event is running, cancel it since there's nothing left
       if (isEventActive()) {
+        const evName = activeEvent;
         if (eventTimer) { clearTimeout(eventTimer); eventTimer = null; }
+        if (fightVictoryTimer) { clearTimeout(fightVictoryTimer); fightVictoryTimer = null; }
+        if (quakeShakeTimer) { clearTimeout(quakeShakeTimer); quakeShakeTimer = null; }
         activeEvent = null; fightState = null;
-        document.getElementById('fight-hud').style.display = 'none';
+        $fightHud.style.display = 'none';
+        $fightWinTxt.style.display = 'none';
+        if (evName === 'pachinko') { cleanupPachinko(); }
+        $container.classList.remove('screen-shake');
+        $raceWinner.classList.remove('show');
       }
+      // Siempre limpiar reward state — puede haber rewards de duración fija activos sin activeEvent
+      rewardBusy = false;
+      rewardQueue = [];
+      if (rewardTimer) { clearTimeout(rewardTimer); rewardTimer = null; }
+      if (activeRewardOnEnd) { activeRewardOnEnd(); activeRewardOnEnd = null; }
+      // Reset Velocidad si estaba activa
+      globalSpeedMultiplier = 0.54;
+      rainMode = false;
+      // Limpiar particles de explosión
+      particles.forEach(pt => pt.el.remove());
+      particles = [];
     }
 
     // === USER DANCE (reward trigger) ===
@@ -1660,9 +1772,9 @@
 
         const laneIdx=drawings.length%4;
         itemEl.style.zIndex=Z_INDEXES[laneIdx];
-        document.getElementById('container').appendChild(itemEl);
+        $container.appendChild(itemEl);
 
-        let obj={el:itemEl,user,code:fullCode,lane:laneIdx,speed:SPEEDS[laneIdx],y:LANES[laneIdx],x:forceX||-400,dying:false,vy:0,rot:0,rainOriginX:0,rainSpeed:1,rainPhase:0,loops:0,boomVx:0,boomVy:0,boomRot:0,boomRotSpeed:0,fightSide:null,fightSlotX:0,fightSlotY:0,fightPhase:Math.random()*7,fightDead:false,tornadoAngle:0,tornadoRadius:0,tornadoStart:0,thrillerDir:1,thrillerY:400,taikoSlotX:0,taikoSlotY:450,raceSpeed:0,raceMult:1,raceFinished:false,gravFlip:false,whirlAngle:0,whirlRadius:0,whirlVr:0};
+        let obj={el:itemEl,user,code:fullCode,lane:laneIdx,speed:SPEEDS[laneIdx],y:LANES[laneIdx],x:forceX||-400,dying:false,vy:0,rot:0,rainOriginX:0,rainSpeed:1,rainPhase:0,loops:0,boomVx:0,boomVy:0,boomRot:0,boomRotSpeed:0,fightSide:null,fightSlotX:0,fightSlotY:0,fightPhase:Math.random()*7,fightDead:false,tornadoAngle:0,tornadoRadius:0,tornadoStart:0,thrillerDir:1,thrillerY:400,taikoSlotX:0,taikoSlotY:450,raceSpeed:0,raceMult:1,raceFinished:false,whirlAngle:0,whirlRadius:0,whirlVr:0,isShowcase:false,isHidden:false,isWaiting:!!isSub,isSpiral:false};
         if(forceX===undefined) obj.x=Math.min(-200, getMinXInLane(laneIdx,null)-350);
         obj.rainOriginX=obj.x;
         drawings.push(obj);
@@ -1684,9 +1796,12 @@
         isShowcaseBusy = true;
         const cur = subQueue.shift();
         cur.el.classList.remove('waiting','hidden');
+        cur.isWaiting = false; cur.isHidden = false;
         cur.el.classList.add('showcase');
+        cur.isShowcase = true;
         showcaseTimer = setTimeout(() => {
           cur.el.classList.remove('showcase');
+          cur.isShowcase = false;
           // If any event is active, join it directly
           if (isEventActive()) {
             cur.el.style.transform='';
@@ -1696,6 +1811,7 @@
           }
           // Normal spiral
           cur.el.classList.add('spiral-to-lane');
+          cur.isSpiral = true;
           const tX=50, tY=LANES[cur.lane], sX=960, sY=540, sS=4.1, eS=1, spins=4, dur=1400;
           const st=performance.now();
           function step(now){
@@ -1703,7 +1819,7 @@
             cur.el.style.transform=`translate3d(${sX+(tX-sX)*e}px,${sY+(tY-sY)*e}px,0) scale(${sS+(eS-sS)*e}) rotate(${spins*360*p}deg)`;
             if(p<1){requestAnimationFrame(step);}
             else{
-              cur.el.classList.remove('spiral-to-lane');cur.el.style.transform='';
+              cur.el.classList.remove('spiral-to-lane');cur.isSpiral=false;cur.el.style.transform='';
               cur.x=tX;cur.y=tY;
               if(isEventActive()){
                 joinActiveEvent(cur);
@@ -1729,13 +1845,19 @@
       }
       // 2. A todos los subs que estaban bailando, esperando o volando, los limpiamos
       drawings.forEach(d => {
-        if (d.el.classList.contains('showcase')) {
+        d.el.style.opacity = 1; // Restaurar visibilidad (puede venir oculto de pachinko/fight)
+        if (d.isShowcase) {
            d.el.classList.remove('showcase');
+           d.isShowcase = false;
            d.el.style.transform = '';
         }
-        if (d.el.classList.contains('waiting')) d.el.classList.remove('waiting', 'hidden');
-        if (d.el.classList.contains('spiral-to-lane')) {
+        if (d.isWaiting) {
+           d.el.classList.remove('waiting', 'hidden');
+           d.isWaiting = false; d.isHidden = false;
+        }
+        if (d.isSpiral) {
            d.el.classList.remove('spiral-to-lane');
+           d.isSpiral = false;
            d.el.style.transform = '';
         }
       });
@@ -1901,7 +2023,7 @@
       activeEvent = 'quake'; rainMode = false;
       forceAllSubsToEvent();
       const startTime = Date.now();
-      document.getElementById('container').classList.add('screen-shake');
+      $container.classList.add('screen-shake');
       drawings.forEach(d => {
         d.el.classList.remove('jumping');
         d.tornadoStart = startTime;
@@ -1911,7 +2033,7 @@
         d.boomRotSpeed = (Math.random() - 0.5) * 12;
       });
       // Screen shake for 15 seconds then settles
-      setTimeout(() => { document.getElementById('container').classList.remove('screen-shake'); }, 15000);
+      quakeShakeTimer = setTimeout(() => { $container.classList.remove('screen-shake'); quakeShakeTimer = null; }, 15000);
       eventTimer = setTimeout(endEvent, 30000);
     }
 
@@ -1934,7 +2056,8 @@
         d.raceFinished = false;
         d.fightPhase = Math.random() * 7;
       });
-      document.getElementById('race-winner').classList.remove('show');
+      $raceWinner.classList.remove('show');
+      raceWinnerFound = false;
       eventTimer = setTimeout(endEvent, 40000);
     }
 
@@ -2250,55 +2373,75 @@
       }
       
       // Physics for all active balls
+      // Pre-compute collision constants (same for all balls)
+      const pegMinDist = PACH.ballSize + PACH.pegRadius;
+      const pegMinDistSq = pegMinDist * pegMinDist;
+      const ballMinDist = PACH.ballSize * 2;
+      const ballMinDistSq = ballMinDist * ballMinDist;
+      const boardWMax = PACH.boardW - PACH.ballSize;
+      const pGravity = PACH.gravity;
+      const pFriction = PACH.friction;
+      const pBounce = PACH.bounce;
+      const pPegBounce = PACH.pegBounce;
+      const pegs = st.pegs;
+      const holes = st.holes;
+      const ballRadius = PACH.ballSize;
+      const displayOffset = PACH.ballDisplay / 2;
+      // Pre-compute divider wall positions (constant during game)
+      const wallTop = PACH.boardH - 85 - 70;
+      const wallBottom = PACH.boardH - 70;
+      const holeBottom = PACH.boardH - 80;
+
       for (let i = st.balls.length - 1; i >= 0; i--) {
         const b = st.balls[i];
         if (!b.alive) continue;
         
         // Gravity
-        b.vy += PACH.gravity * dt;
+        b.vy += pGravity * dt;
         
         // Apply velocity
         b.x += b.vx * dt;
         b.y += b.vy * dt;
         
         // Friction
-        b.vx *= PACH.friction;
+        b.vx *= pFriction;
         
         // Rotation
         b.rot += b.rotSpeed * dt;
         b.rotSpeed *= 0.998;
         
         // Wall bounces (left and right of board)
-        if (b.x < b.radius) { b.x = b.radius; b.vx = Math.abs(b.vx) * PACH.bounce; b.rotSpeed += 2; }
-        if (b.x > PACH.boardW - b.radius) { b.x = PACH.boardW - b.radius; b.vx = -Math.abs(b.vx) * PACH.bounce; b.rotSpeed -= 2; }
+        if (b.x < ballRadius) { b.x = ballRadius; b.vx = Math.abs(b.vx) * pBounce; b.rotSpeed += 2; }
+        if (b.x > boardWMax) { b.x = boardWMax; b.vx = -Math.abs(b.vx) * pBounce; b.rotSpeed -= 2; }
         
         // Top bounce
-        if (b.y < b.radius) { b.y = b.radius; b.vy = Math.abs(b.vy) * 0.3; }
+        if (b.y < ballRadius) { b.y = ballRadius; b.vy = Math.abs(b.vy) * 0.3; }
         
-        // Peg collisions
-        for (const peg of st.pegs) {
-          const dx = b.x - peg.x;
+        // Peg collisions — skip pegs far in Y (most common early exit)
+        for (let pi = 0, pl = pegs.length; pi < pl; pi++) {
+          const peg = pegs[pi];
           const dy = b.y - peg.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          const minDist = b.radius + PACH.pegRadius;
-          if (dist < minDist && dist > 0) {
-            // Push ball out
-            const nx = dx / dist;
-            const ny = dy / dist;
-            b.x = peg.x + nx * minDist;
-            b.y = peg.y + ny * minDist;
-            
-            // Reflect velocity
-            const dot = b.vx * nx + b.vy * ny;
-            b.vx -= 2 * dot * nx * PACH.pegBounce;
-            b.vy -= 2 * dot * ny * PACH.pegBounce;
-            
-            // Peggle-style: strong lateral scatter + slight upward pop
-            b.vx += (Math.random() - 0.5) * 2.5;
-            b.vy += (Math.random() - 0.5) * 1.2 - 0.3; // bias upward slightly
-            
-            b.rotSpeed = (Math.random() - 0.5) * 12;
-          }
+          if (dy > pegMinDist || dy < -pegMinDist) continue; // Y-distance alone rules out collision
+          const dx = b.x - peg.x;
+          const distSq = dx * dx + dy * dy;
+          if (distSq >= pegMinDistSq || distSq === 0) continue;
+          const dist = Math.sqrt(distSq);
+          // Push ball out
+          const nx = dx / dist;
+          const ny = dy / dist;
+          b.x = peg.x + nx * pegMinDist;
+          b.y = peg.y + ny * pegMinDist;
+          
+          // Reflect velocity
+          const dot = b.vx * nx + b.vy * ny;
+          b.vx -= 2 * dot * nx * pPegBounce;
+          b.vy -= 2 * dot * ny * pPegBounce;
+          
+          // Peggle-style: strong lateral scatter + slight upward pop
+          b.vx += (Math.random() - 0.5) * 2.5;
+          b.vy += (Math.random() - 0.5) * 1.2 - 0.3; // bias upward slightly
+          
+          b.rotSpeed = (Math.random() - 0.5) * 12;
         }
         
         // Ball-to-ball collisions (lighter)
@@ -2307,48 +2450,43 @@
           if (!o.alive) continue;
           const dx = b.x - o.x;
           const dy = b.y - o.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          const minDist = b.radius * 2;
-          if (dist < minDist && dist > 0) {
-            const nx = dx / dist;
-            const ny = dy / dist;
-            const overlap = (minDist - dist) / 2;
-            b.x += nx * overlap;
-            b.y += ny * overlap;
-            o.x -= nx * overlap;
-            o.y -= ny * overlap;
-            const dvx = b.vx - o.vx;
-            const dvy = b.vy - o.vy;
-            const dot = dvx * nx + dvy * ny;
-            if (dot > 0) {
-              b.vx -= dot * nx * 0.4;
-              b.vy -= dot * ny * 0.4;
-              o.vx += dot * nx * 0.4;
-              o.vy += dot * ny * 0.4;
-            }
+          const distSq = dx * dx + dy * dy;
+          if (distSq >= ballMinDistSq || distSq === 0) continue;
+          const dist = Math.sqrt(distSq);
+          const nx = dx / dist;
+          const ny = dy / dist;
+          const overlap = (ballMinDist - dist) / 2;
+          b.x += nx * overlap;
+          b.y += ny * overlap;
+          o.x -= nx * overlap;
+          o.y -= ny * overlap;
+          const dvx = b.vx - o.vx;
+          const dvy = b.vy - o.vy;
+          const dot = dvx * nx + dvy * ny;
+          if (dot > 0) {
+            b.vx -= dot * nx * 0.4;
+            b.vy -= dot * ny * 0.4;
+            o.vx += dot * nx * 0.4;
+            o.vy += dot * ny * 0.4;
           }
         }
         
         // Divider wall collisions
-        st.holes.forEach((h, idx) => {
-          if (idx < st.holes.length - 1) {
-            const wallX = h.x + h.w - 2;
-            const wallTop = PACH.boardH - 85 - 70;
-            const wallBottom = PACH.boardH - 70;
-            if (b.y > wallTop && b.y < wallBottom) {
-              if (Math.abs(b.x - wallX) < b.radius + 2) {
-                if (b.x < wallX) { b.x = wallX - b.radius - 2; b.vx = -Math.abs(b.vx) * 0.5; }
-                else { b.x = wallX + b.radius + 2; b.vx = Math.abs(b.vx) * 0.5; }
-              }
+        if (b.y > wallTop && b.y < wallBottom) {
+          for (let hi = 0, hl = holes.length - 1; hi < hl; hi++) {
+            const wallX = holes[hi].x + holes[hi].w - 2;
+            if (Math.abs(b.x - wallX) < ballRadius + 2) {
+              if (b.x < wallX) { b.x = wallX - ballRadius - 2; b.vx = -Math.abs(b.vx) * 0.5; }
+              else { b.x = wallX + ballRadius + 2; b.vx = Math.abs(b.vx) * 0.5; }
             }
           }
-        });
+        }
         
         // Check if ball entered a hole (bottom of board)
-        if (b.y > PACH.boardH - 80 && !b.scored) {
+        if (b.y > holeBottom && !b.scored) {
           // Find which hole
-          for (let hi = 0; hi < st.holes.length; hi++) {
-            const h = st.holes[hi];
+          for (let hi = 0; hi < holes.length; hi++) {
+            const h = holes[hi];
             if (b.x >= h.x && b.x < h.x + h.w) {
               b.scored = true;
               b.alive = false;
@@ -2416,8 +2554,7 @@
         
         // Update visual position
         if (b.alive) {
-          const displayOffset = PACH.ballDisplay / 2;
-          b.el.style.transform = `translate3d(${b.x - displayOffset}px, ${b.y - displayOffset}px, 0) rotate(${b.rot}deg)`;
+          b.el.style.transform = `translate3d(${(b.x - displayOffset)|0}px,${(b.y - displayOffset)|0}px,0) rotate(${b.rot|0}deg)`;
         }
       }
       
@@ -2427,7 +2564,21 @@
       }
     }
 
+    let pachinkoScoresDirty = false;
+    let pachinkoScoresRafId = null;
+
     function updatePachinkoScores() {
+      if (!pachinkoState) return;
+      // Agrupar múltiples updates en un solo repaint via rAF
+      if (!pachinkoScoresDirty) {
+        pachinkoScoresDirty = true;
+        pachinkoScoresRafId = requestAnimationFrame(flushPachinkoScores);
+      }
+    }
+
+    function flushPachinkoScores() {
+      pachinkoScoresDirty = false;
+      pachinkoScoresRafId = null;
       if (!pachinkoState) return;
       const list = document.getElementById('pachinko-scores-list');
       const scores = pachinkoState.scores;
@@ -2450,6 +2601,8 @@
       });
       list.innerHTML = html;
     }
+
+    let pachinkoWinnerTimer = null;
 
     function showPachinkoWinner() {
       if (!pachinkoState) return;
@@ -2477,7 +2630,9 @@
       winnerEl.style.display = 'flex';
       
       // End everything after 8 seconds
-      setTimeout(() => {
+      if (pachinkoWinnerTimer) clearTimeout(pachinkoWinnerTimer);
+      pachinkoWinnerTimer = setTimeout(() => {
+        pachinkoWinnerTimer = null;
         winnerEl.style.display = 'none';
         endEvent();
       }, 8000);
@@ -2490,6 +2645,10 @@
         if (pachinkoState.settleTimeout) clearTimeout(pachinkoState.settleTimeout);
       }
       pachinkoState = null;
+      if (pachinkoWinnerTimer) { clearTimeout(pachinkoWinnerTimer); pachinkoWinnerTimer = null; }
+      // Cancel any pending score render
+      if (pachinkoScoresRafId) { cancelAnimationFrame(pachinkoScoresRafId); pachinkoScoresRafId = null; }
+      pachinkoScoresDirty = false;
       document.getElementById('pachinko-hud').style.display = 'none';
       document.getElementById('pachinko-board').innerHTML = '';
       document.getElementById('pachinko-scores-list').innerHTML = '';
@@ -2503,7 +2662,7 @@
       if (activeEvent === 'fight') { endEvent(); return; }
       if (isEventActive()) endEvent();
       forceAllSubsToEvent();
-      const eligible = drawings.filter(d => !d.el.classList.contains('showcase')&&!d.el.classList.contains('waiting')&&!d.el.classList.contains('spiral-to-lane'));
+      const eligible = drawings.filter(d => !d.isShowcase&&!d.isWaiting&&!d.isSpiral);
       if (eligible.length < 4) { finishReward(); return; }
       
       activeEvent = 'fight'; rainMode = false;
@@ -2562,21 +2721,20 @@
       };
 
       // Show HUD
-      const hud = document.getElementById('fight-hud');
-      hud.style.display = 'block';
-      document.getElementById('hp-left').style.width = '100%';
-      document.getElementById('hp-right').style.width = '100%';
-      document.getElementById('hp-label-left').textContent = `🔴 EQUIPO ROJO (${leftTeam.length})`;
-      document.getElementById('hp-label-right').textContent = `🔵 EQUIPO AZUL (${rightTeam.length})`;
-      document.getElementById('fight-text').style.display = 'none';
-      document.getElementById('fight-winner-text').style.display = 'none';
+      $fightHud.style.display = 'block';
+      $hpLeft.style.width = '100%';
+      $hpRight.style.width = '100%';
+      $hpLabelL.textContent = `🔴 EQUIPO ROJO (${leftTeam.length})`;
+      $hpLabelR.textContent = `🔵 EQUIPO AZUL (${rightTeam.length})`;
+      $fightText.style.display = 'none';
+      $fightWinTxt.style.display = 'none';
 
 
       // A los 5s de prepararse, arranca el countdown 3, 2, 1, FIGHT!
       setTimeout(() => {
         if (activeEvent !== 'fight') return;
         let count = 3;
-        const ft = document.getElementById('fight-text');
+        const ft = $fightText;
         
         function tickCountdown() {
           // Si el evento se canceló en el medio, cortamos acá
@@ -2656,8 +2814,8 @@
           else fightState.leftTotalHP--;
 
           // Update HP bars
-          document.getElementById('hp-left').style.width = Math.max(0, fightState.leftTotalHP / fightState.leftMaxHP * 100) + '%';
-          document.getElementById('hp-right').style.width = Math.max(0, fightState.rightTotalHP / fightState.rightMaxHP * 100) + '%';
+          $hpLeft.style.width = Math.max(0, fightState.leftTotalHP / fightState.leftMaxHP * 100) + '%';
+          $hpRight.style.width = Math.max(0, fightState.rightTotalHP / fightState.rightMaxHP * 100) + '%';
 
           // Did the target die?
           if (target.fightHP <= 0) {
@@ -2696,6 +2854,9 @@
       }
     }
 
+    let fightVictoryTimer = null;
+    let quakeShakeTimer = null;
+
     function finishFight() {
       if (!fightState) return;
       if (eventTimer) { clearTimeout(eventTimer); eventTimer = null; }
@@ -2710,7 +2871,7 @@
 
       playSound(SFX.win, 0.75);
       // Show winner text
-      const wt = document.getElementById('fight-winner-text');
+      const wt = $fightWinTxt;
       wt.textContent = `🏆 EQUIPO ${sideName} GANA!`;
       wt.style.display = 'block';
 
@@ -2720,7 +2881,6 @@
         // Single row, well spaced
         const spacing = Math.min(220, 1400 / count);
         winners.forEach((d, i) => {
-          d.el.style.opacity = 1;
           d.x = 960 - (count-1)*spacing/2 + i*spacing;
           d.y = 450;
         });
@@ -2730,7 +2890,6 @@
         const spacingX = Math.min(220, 1400 / cols);
         const spacingY = 200;
         winners.forEach((d, i) => {
-          d.el.style.opacity = 1;
           const row = Math.floor(i / cols);
           const col = i % cols;
           const rowCount = row === 0 ? cols : count - cols;
@@ -2740,8 +2899,10 @@
       }
 
       // After 8s of victory dance, end the event
-      setTimeout(() => {
-        document.getElementById('fight-hud').style.display = 'none';
+      if (fightVictoryTimer) clearTimeout(fightVictoryTimer);
+      fightVictoryTimer = setTimeout(() => {
+        fightVictoryTimer = null;
+        $fightHud.style.display = 'none';
         // Restore all (including "dead" ones)
         drawings.forEach(d => { d.fightDead = false; d.el.style.opacity = 1; });
         endEvent();
@@ -2756,24 +2917,14 @@
     // ==============================================================
     // ==============================================================
 
-    function toggleRain() {
-      rainMode = !rainMode;
-      drawings.forEach(d => {
-        if (rainMode) { d.rainOriginX = d.x; d.rainSpeed = 0.8 + Math.random() * 2; d.rainPhase = Math.random() * 7; }
-        else { d.y = LANES[d.lane]; }
-      });
-    }
-
-    // ==============================================================
-
     connectTwitch();
     connectBot();
     if (FEAT_PIXEL) connectPubSub();
 
     // Ocultar el container del pixel art si está desactivado
     if (!FEAT_PIXEL) {
-      document.getElementById('container').style.display = 'none';
-      document.getElementById('fight-hud').style.display = 'none';
+      $container.style.display = 'none';
+      $fightHud.style.display = 'none';
     }
 
     // ==============================================================
